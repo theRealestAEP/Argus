@@ -46,6 +46,7 @@ export async function runDaemon(
 	wait: DaemonWait = waitForStop,
 ): Promise<void> {
 	const startedAt = new Date();
+	const stopped = wait();
 	writeHeartbeat(root, startedAt);
 	recordEvidence(root, "daemon.started", `PID ${process.pid}`, startedAt);
 	let cycleActive = false;
@@ -61,7 +62,7 @@ export async function runDaemon(
 	await tick();
 	const timer = setInterval(() => void tick(), 30_000);
 	try {
-		await wait();
+		await stopped;
 	} finally {
 		clearInterval(timer);
 		writeHeartbeat(root, startedAt);

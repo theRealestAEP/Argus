@@ -31,6 +31,7 @@ const steps = [
 		"setup",
 		[
 			"setup",
+			"--automatic-process-termination",
 			"--device-purpose=Linux evaluation host",
 			"--admin-contact=security@example.test",
 			"--approved-agent-runtimes=codex,local-review-agent",
@@ -79,6 +80,7 @@ const report = {
 	artifacts: artifactResults,
 	metrics: {
 		approvedAgentRuntimeCount: policy.approvedAgentRuntimes.length,
+		automaticProcessTermination: policy.automaticProcessTermination === true,
 		artifactPassRate: presentArtifacts / artifactResults.length,
 		capabilityReadyCount: capabilityReport.probes.filter(
 			(probe) => probe.status === "ready",
@@ -108,7 +110,8 @@ console.log(JSON.stringify(report, null, 2));
 if (
 	passedSteps !== steps.length ||
 	presentArtifacts !== artifactResults.length ||
-	policy.approvedAgentRuntimes.length !== 2
+	policy.approvedAgentRuntimes.length !== 2 ||
+	policy.automaticProcessTermination !== true
 ) {
 	process.exitCode = 1;
 }

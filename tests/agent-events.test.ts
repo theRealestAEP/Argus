@@ -12,11 +12,12 @@ import type { ContainmentGateway } from "../src/containment.js";
 import type { Alert, OnboardingAnswers } from "../src/contracts.js";
 import { statePaths } from "../src/paths.js";
 
-function agentState(runtime: string) {
+function agentState(runtime: string, automaticProcessTermination = false) {
 	const root = mkdtempSync(join(tmpdir(), "argus-agent-event-test-"));
 	const answers: OnboardingAnswers = {
 		adminContact: "local-only",
 		agentMailInbox: null,
+		automaticProcessTermination,
 		approvedAgentRuntimes: [runtime],
 		criticalPaths: ["/opt/protected"],
 		devicePurpose: "agent event test",
@@ -107,6 +108,42 @@ describe("agent runtime events", () => {
 
 		expect(collectAgentRuntimeAlerts(root, policy, [])).toHaveLength(1);
 		expect(readdirSync(paths.brokerRequests)).toEqual([]);
+	});
+
+	test("terminates a confirmed process when setup permits it", () => {
+		const runtime = "test-agent";
+		const { answers, root } = agentState(runtime, true);
+		const paths = statePaths(root);
+		const target = "/opt/protected/changed.json";
+		const event = {
+			action: "unauthorized-file-write",
+			id: randomUUID(),
+			observedAt: "2026-01-01T00:00:00.000Z",
+			pid: process.pid,
+			runtime,
+			target,
+		};
+		writeFileSync(join(paths.agentEvents, `${event.id}.json`), JSON.stringify(event));
+		const manifest = bootstrap(root, answers);
+		const policy = { ...answers, createdAt: manifest.createdAt };
+		const identity = { executable: "/bin/test-agent", pid: process.pid, startTimeTicks: "10" };
+		const inspector = {
+			command: () => "/bin/test-agent --serve",
+			identity: () => identity,
+		};
+		collectAgentRuntimeAlerts(root, policy, [fileAlert(target)], new Date(), inspector);
+
+		let terminated = 0;
+		const gateway: ContainmentGateway = {
+			pause: () => undefined,
+			processIdentity: () => identity,
+			runNft: () => undefined,
+			terminate: (pid) => {
+				terminated = pid;
+			},
+		};
+		expect(processBrokerRequests(root, 0, gateway)).toHaveLength(1);
+		expect(terminated).toBe(process.pid);
 	});
 
 	test("records a failed process identity check", () => {

@@ -26,7 +26,7 @@ Response modes:
 
 - `report-only`: record and report.
 - `approval-required`: ask before containment.
-- `autonomous-action`: apply approved reversible containment.
+- `autonomous-action`: apply policy-approved containment.
 
 Setup asks whether Argus may terminate a confirmed malicious process
 automatically. The default requires approval during the incident.
