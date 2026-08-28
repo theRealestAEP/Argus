@@ -6,14 +6,23 @@ import {
 	DEFAULT_FALLBACK_MODEL,
 	DEFAULT_PRIMARY_MODEL,
 	INVESTIGATOR_CACHE_KEY,
+	buildGuidedOnboardingRequest,
 	buildCompactionRequest,
 	buildMainRequest,
+	buildSensorPlanReviewRequest,
 	buildSubagentRequest,
+	buildSensorCommissioningRequest,
+	guidedOnboardingTurn,
+	guidedOnboardingWithGateway,
 	investigateWithGateway,
 	investigateWithSubagent,
 	isUnavailableModelError,
 	openAIGateway,
 	resolveModels,
+	reviewLinuxSensorPlan,
+	reviewSensorPlanWithGateway,
+	selectSensorsWithGateway,
+	selectLinuxSensors,
 	tokenUsage,
 	type ModelGateway,
 	type ModelResponse,
@@ -60,6 +69,221 @@ function gatewayFor(responses: ModelResponse[]): ModelGateway {
 }
 
 describe("model runtime", () => {
+	test("runs structured conversational onboarding", async () => {
+		const context = {
+			defaultAgentMailInbox: "argus@example.test",
+			host: { arch: "x64", hostname: "host", platform: "linux" },
+			observed: { establishedConnectionCount: 2, listenerCount: 1, processCount: 10 },
+		};
+		const turn = { confirmed: false, message: "What does this host do?", policy: null };
+		const request = buildGuidedOnboardingRequest("model", context, []);
+
+		expect(request.store).toBe(false);
+		expect(request.text?.format?.type).toBe("json_schema");
+		await expect(guidedOnboardingWithGateway(
+			gatewayFor([response("turn", JSON.stringify(turn))]),
+			context,
+			[],
+			"model",
+			"fallback",
+		)).resolves.toEqual(turn);
+
+		let calls = 0;
+		const fallbackGateway: ModelGateway = {
+			compact: () => Promise.resolve({ id: "compact", usage }),
+			create: () => {
+				calls += 1;
+				return calls === 1
+					? Promise.reject(new APIError(404, {}, "missing", new Headers()))
+					: Promise.resolve(response("turn", JSON.stringify(turn)));
+			},
+		};
+		await expect(guidedOnboardingWithGateway(
+			fallbackGateway,
+			context,
+			[],
+			"primary",
+			"fallback",
+		)).resolves.toEqual(turn);
+		await expect(guidedOnboardingTurn(context, [], "")).rejects.toThrow(
+			"required for guided setup",
+		);
+		await expect(guidedOnboardingWithGateway(
+			{
+				compact: () => Promise.resolve({ id: "compact", usage }),
+				create: () => Promise.reject(new Error("network failure")),
+			},
+			context,
+			[],
+			"primary",
+			"fallback",
+		)).rejects.toThrow("network failure");
+	});
+
+	test("lets the model select bounded Linux sensors", async () => {
+		const policy = {
+			adminContact: "local-only",
+			approvedAgentRuntimes: [],
+			createdAt: "2026-01-01T00:00:00.000Z",
+			criticalPaths: ["/etc"],
+			devicePurpose: "server",
+			expectedServices: ["sshd"],
+			maintenanceWindow: "Sunday 02:00",
+			responseMode: "approval-required" as const,
+			retentionDays: 30,
+			reviewSchedule: "daily",
+		};
+		const baseline = {
+			authFailureCount: 0,
+			criticalFiles: [],
+			establishedConnectionCount: 2,
+			listeners: [],
+			observedAt: "2026-01-01T00:00:00.000Z",
+			processes: [],
+		};
+		const selection = {
+			authentication: true,
+			criticalFiles: true,
+			listeners: true,
+			networkConnections: true,
+			processes: true,
+			reason: "Server baseline",
+			thresholds: {
+				authFailureBurst: 4,
+				establishedConnectionBurst: 10,
+				processStartBurst: 8,
+			},
+		};
+		const request = buildSensorCommissioningRequest("model", policy, baseline);
+		expect(request.store).toBe(false);
+		expect(request.text?.format?.type).toBe("json_schema");
+		await expect(
+			selectSensorsWithGateway(
+				gatewayFor([response("selection", JSON.stringify(selection))]),
+				policy,
+				baseline,
+				"model",
+				"fallback",
+			),
+		).resolves.toEqual(selection);
+
+		let calls = 0;
+		const fallbackGateway: ModelGateway = {
+			compact: () => Promise.resolve({ id: "compact", usage }),
+			create: () => {
+				calls += 1;
+				return calls === 1
+					? Promise.reject(new APIError(404, {}, "missing", new Headers()))
+					: Promise.resolve(response("selection", JSON.stringify(selection)));
+			},
+		};
+		await expect(
+			selectSensorsWithGateway(
+				fallbackGateway,
+				policy,
+				baseline,
+				"primary",
+				"fallback",
+			),
+		).resolves.toEqual(selection);
+		await expect(selectLinuxSensors(policy, baseline, "")).rejects.toThrow(
+			"required to commission",
+		);
+	});
+
+	test("lets the operator ask the model about the sensor plan", async () => {
+		const policy = {
+			adminContact: "local-only",
+			approvedAgentRuntimes: [],
+			createdAt: "2026-01-01T00:00:00.000Z",
+			criticalPaths: ["/etc"],
+			devicePurpose: "server",
+			expectedServices: ["sshd"],
+			maintenanceWindow: "Sunday 02:00",
+			responseMode: "approval-required" as const,
+			retentionDays: 30,
+			reviewSchedule: "daily",
+		};
+		const baseline = {
+			authFailureCount: 0,
+			criticalFiles: [],
+			establishedConnectionCount: 2,
+			listeners: [],
+			observedAt: "2026-01-01T00:00:00.000Z",
+			processes: [],
+		};
+		const selection = {
+			authentication: true,
+			criticalFiles: true,
+			listeners: true,
+			networkConnections: true,
+			processes: true,
+			reason: "Protect the server.",
+			thresholds: {
+				authFailureBurst: 4,
+				establishedConnectionBurst: 10,
+				processStartBurst: 8,
+			},
+		};
+		const answer = { reply: "I will watch new listeners.", selection };
+		const request = buildSensorPlanReviewRequest(
+			"model",
+			policy,
+			baseline,
+			selection,
+			"Why watch listeners?",
+		);
+
+		expect(request.store).toBe(false);
+		expect(request.input).toContain("Why watch listeners?");
+		await expect(reviewSensorPlanWithGateway(
+			gatewayFor([response("answer", JSON.stringify(answer))]),
+			policy,
+			baseline,
+			selection,
+			"Why watch listeners?",
+			"model",
+			"fallback",
+		)).resolves.toEqual(answer);
+		let calls = 0;
+		const fallbackGateway: ModelGateway = {
+			compact: () => Promise.resolve({ id: "compact", usage }),
+			create: () => {
+				calls += 1;
+				return calls === 1
+					? Promise.reject(new APIError(404, {}, "missing", new Headers()))
+					: Promise.resolve(response("answer", JSON.stringify(answer)));
+			},
+		};
+		await expect(reviewSensorPlanWithGateway(
+			fallbackGateway,
+			policy,
+			baseline,
+			selection,
+			"Why watch listeners?",
+			"primary",
+			"fallback",
+		)).resolves.toEqual(answer);
+		await expect(reviewLinuxSensorPlan(
+			policy,
+			baseline,
+			selection,
+			"question",
+			"",
+		)).rejects.toThrow("required to review");
+		await expect(reviewSensorPlanWithGateway(
+			{
+				compact: () => Promise.resolve({ id: "compact", usage }),
+				create: () => Promise.reject(new Error("network failure")),
+			},
+			policy,
+			baseline,
+			selection,
+			"question",
+			"primary",
+			"fallback",
+		)).rejects.toThrow("network failure");
+	});
 	test("uses the defensive model and SOL fallback by default", () => {
 		expect(resolveModels(undefined, undefined)).toEqual({
 			fallbackModel: DEFAULT_FALLBACK_MODEL,

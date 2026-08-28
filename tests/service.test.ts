@@ -10,7 +10,10 @@ import { statePaths } from "../src/paths.js";
 import {
 	LINUX_SERVICE_LINK,
 	LINUX_SERVICE_PATH,
+	LINUX_BROKER_SERVICE_LINK,
+	LINUX_BROKER_SERVICE_PATH,
 	MACOS_SERVICE_PATH,
+	buildBrokerServicePlan,
 	buildServicePlan,
 	installService,
 	nativeServiceGateway,
@@ -29,6 +32,7 @@ describe("boot service", () => {
 			"linux",
 			"/var/lib/argus state",
 			"/opt/argus app",
+			"/etc/argus/env file",
 			"/usr/bin/node",
 			"argus",
 			"argus",
@@ -39,13 +43,23 @@ describe("boot service", () => {
 		expect(plan.content).toContain("WantedBy=multi-user.target");
 		expect(plan.content).toContain("Restart=on-failure");
 		expect(plan.content).toContain(
-			'"--env-file-if-exists=/opt/argus app/.env"',
+			'"--env-file-if-exists=/etc/argus/env file"',
 		);
 		expect(plan.content).toContain('"--state-dir=/var/lib/argus state"');
 		expect(serviceResourcePaths("linux")).toEqual([
 			LINUX_SERVICE_PATH,
 			LINUX_SERVICE_LINK,
+			LINUX_BROKER_SERVICE_PATH,
+			LINUX_BROKER_SERVICE_LINK,
 		]);
+	});
+
+	test("builds a root Linux containment broker", () => {
+		const plan = buildBrokerServicePlan("/var/lib/argus", "/opt/argus", "/usr/bin/node");
+		expect(plan.path).toBe(LINUX_BROKER_SERVICE_PATH);
+		expect(plan.content).toContain("CapabilityBoundingSet=CAP_NET_ADMIN CAP_KILL");
+		expect(plan.content).toContain("ReadWritePaths=\"/var/lib/argus\"");
+		expect(plan.content).toContain("broker");
 	});
 
 	test("builds an escaped macOS launch daemon", () => {
@@ -53,6 +67,7 @@ describe("boot service", () => {
 			"darwin",
 			"/var/argus&state",
 			"/opt/argus<app>",
+			"/etc/argus&env",
 			"/usr/local/bin/node",
 			"argus-user",
 			"staff",
@@ -63,7 +78,7 @@ describe("boot service", () => {
 		expect(plan.content).toContain("<key>RunAtLoad</key>");
 		expect(plan.content).toContain("<key>KeepAlive</key>");
 		expect(plan.content).toContain(
-			"--env-file-if-exists=/opt/argus&lt;app&gt;/.env",
+			"--env-file-if-exists=/etc/argus&amp;env",
 		);
 		expect(plan.content).toContain("/opt/argus&lt;app&gt;");
 		expect(plan.content).toContain("/var/argus&amp;state");
@@ -75,6 +90,7 @@ describe("boot service", () => {
 			"linux",
 			"/state",
 			"/project",
+			"/env",
 			"/node",
 			"argus",
 			"argus",
@@ -99,6 +115,7 @@ describe("boot service", () => {
 				"linux",
 				"/state",
 				"/project",
+				"/env",
 				"/node",
 				"argus\nUser=root",
 				"argus",
@@ -112,6 +129,7 @@ describe("boot service", () => {
 			"linux",
 			"/state",
 			"/project",
+			"/env",
 			"/node",
 			"argus",
 			"argus",

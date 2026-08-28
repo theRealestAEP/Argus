@@ -23,6 +23,24 @@ export function readInstallManifest(root: string): InstallManifest {
 	);
 }
 
+export function addInstallResources(root: string, resources: string[]): InstallManifest {
+	const paths = statePaths(root);
+	const current = readInstallManifest(root);
+	const manifest = installManifestSchema.parse({
+		...current,
+		resources: [...new Set([...current.resources, ...resources])],
+	});
+	const text = jsonText(manifest);
+	writePrivate(paths.installManifest, text);
+	const signature = sign(
+		null,
+		Buffer.from(text),
+		readFileSync(paths.privateKey, "utf8"),
+	);
+	writePrivate(paths.installSignature, `${signature.toString("base64")}\n`);
+	return manifest;
+}
+
 export function bootstrap(
 	root: string,
 	answers: OnboardingAnswers,
@@ -34,8 +52,20 @@ export function bootstrap(
 	}
 
 	mkdirSync(paths.root, { mode: 0o700, recursive: true });
+	mkdirSync(paths.agentEvents, { mode: 0o700, recursive: true });
+	mkdirSync(paths.agentEventsProcessed, { mode: 0o700, recursive: true });
+	mkdirSync(paths.agentEventsRejected, { mode: 0o700, recursive: true });
 	mkdirSync(paths.memoryPacks, { mode: 0o700, recursive: true });
 	mkdirSync(paths.logs, { mode: 0o700, recursive: true });
+	mkdirSync(paths.alerts, { mode: 0o700, recursive: true });
+	mkdirSync(paths.alertWorking, { mode: 0o700, recursive: true });
+	mkdirSync(paths.archiveReceipts, { mode: 0o700, recursive: true });
+	mkdirSync(paths.brokerRequests, { mode: 0o700, recursive: true });
+	mkdirSync(paths.brokerRejected, { mode: 0o700, recursive: true });
+	mkdirSync(paths.containmentReceipts, { mode: 0o700, recursive: true });
+	mkdirSync(paths.reports, { mode: 0o700, recursive: true });
+	mkdirSync(paths.mailReceipts, { mode: 0o700, recursive: true });
+	mkdirSync(paths.operatorMessages, { mode: 0o700, recursive: true });
 	mkdirSync(paths.runtime, { mode: 0o700, recursive: true });
 	createKeys(paths.privateKey, paths.publicKey);
 
@@ -50,15 +80,33 @@ export function bootstrap(
 		host,
 		resources: [
 			paths.root,
+			paths.agentEvents,
+			paths.agentEventsProcessed,
+			paths.agentEventsRejected,
 			paths.memoryPacks,
 			paths.logs,
 			paths.eventLog,
+			paths.alerts,
+			paths.alertWorking,
+			paths.archiveReceipts,
+			paths.brokerRequests,
+			paths.brokerRejected,
+			paths.containmentReceipts,
+			paths.reports,
+			paths.mailReceipts,
+			paths.operatorMessages,
 			paths.runtime,
 			paths.keys,
 			paths.capabilityReport,
 			paths.scope,
 			paths.policy,
 			paths.policySignature,
+			paths.sensorConfig,
+			paths.sensorIntegrityState,
+			paths.sensorSignature,
+			paths.sensorState,
+			paths.emailCursor,
+			paths.reviewState,
 			paths.privateKey,
 			paths.publicKey,
 			paths.installSignature,

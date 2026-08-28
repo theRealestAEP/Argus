@@ -5,7 +5,7 @@ import { join } from "node:path";
 
 import { describe, expect, test } from "vitest";
 
-import { bootstrap } from "../src/bootstrap.js";
+import { addInstallResources, bootstrap } from "../src/bootstrap.js";
 import { platformProbes, saveCapabilityReport } from "../src/capabilities.js";
 import type { OnboardingAnswers } from "../src/contracts.js";
 import { runDoctor } from "../src/doctor.js";
@@ -173,5 +173,17 @@ describe("on-device foundation", () => {
 		expect(plan.toSorted()).toEqual(manifest.resources.toSorted());
 		expect(plan.at(-1)).toBe(root);
 		expect(plan).toContain(statePaths(root).keys);
+	});
+
+	test("adds installer resources and keeps the manifest signature valid", () => {
+		const root = temporaryState();
+		bootstrap(root, onboarding("server"));
+		saveReadyCapabilities(root);
+
+		const manifest = addInstallResources(root, ["/etc/argus-ids", "/etc/argus-ids"]);
+
+		expect(manifest.resources.filter((item) => item === "/etc/argus-ids"))
+			.toHaveLength(1);
+		expect(runDoctor(root).ok).toBe(true);
 	});
 });

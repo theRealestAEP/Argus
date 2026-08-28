@@ -6,4 +6,4 @@ project_dir=$(dirname -- "$script_dir")
 
 cd "$project_dir"
 docker build --tag on-device-ids-agent-e2e --file tests/e2e/Dockerfile .
-docker run --rm on-device-ids-agent-e2e
+docker run --rm --cap-add NET_ADMIN on-device-ids-agent-e2e

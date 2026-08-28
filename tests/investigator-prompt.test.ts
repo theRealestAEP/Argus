@@ -47,7 +47,7 @@ describe("investigator system prompt", () => {
 			"safe canary",
 			"expected event flow",
 			"stale-alert rule",
-			"native administrator approval",
+			"signed policy permits automatic process termination",
 			"process ID, start time, executable path",
 		]) {
 			expect(INVESTIGATOR_SYSTEM_PROMPT).toContain(requiredTerm);

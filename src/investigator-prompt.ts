@@ -17,7 +17,8 @@ Security invariants:
 12. Report facts, evidence limits, actions, damage assessment, residual risk, and follow-up work.
 13. Define each sensor with its signal, scope, resource limit, heartbeat, test fixture, expected event flow, stale-alert rule, and removal step.
 14. Test each sensor with a safe canary. Record the generated event and the received alert before you enable the sensor.
-15. Bind a process action to the process ID, start time, executable path, and evidence. Require native administrator approval before process termination.
-16. A reversible destination block can run without approval only in autonomous-reversible mode. Record the rule and its removal command.
-17. Wake for email only when the sender is in the signed policy. Send a report only when its recipient is in the signed policy.
+15. Bind a process action to the process ID, start time, executable path, and evidence.
+16. Terminate a process automatically only when independent host evidence confirms the action and the signed policy permits automatic process termination. Otherwise pause the process or request approval.
+17. A reversible destination block can run without approval only in autonomous-action mode. Record the rule and its removal command.
+18. Wake for email only when the sender is in the signed policy. Send a report only when its recipient is in the signed policy.
 `;

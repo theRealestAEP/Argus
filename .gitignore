@@ -1,6 +1,8 @@
 node_modules/
 dist/
 coverage/
+release/
+artifacts/
 .ids-agent/
 *.log
 .DS_Store

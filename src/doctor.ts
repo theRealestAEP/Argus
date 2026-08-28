@@ -5,6 +5,7 @@ import type { DoctorCheck, DoctorReport } from "./contracts.js";
 import { capabilityReportSchema, onboardingPolicySchema } from "./contracts.js";
 import { readInstallManifest } from "./bootstrap.js";
 import { detectHost, validateLocalScope } from "./host.js";
+import { readSensorConfig } from "./linux-sensors.js";
 import { statePaths } from "./paths.js";
 
 function fileCheck(name: string, path: string): DoctorCheck {
@@ -67,6 +68,33 @@ function stateChecks(root: string): DoctorCheck[] {
 	];
 }
 
+export function linuxSensorChecks(root: string): DoctorCheck[] {
+	const paths = statePaths(root);
+	const checks = [
+		fileCheck("sensor configuration", paths.sensorConfig),
+		fileCheck("sensor configuration signature", paths.sensorSignature),
+		fileCheck("sensor state", paths.sensorState),
+	];
+	if (checks.some((check) => !check.ok)) {
+		return checks;
+	}
+	try {
+		const sensors = readSensorConfig(root);
+		checks.push({
+			detail: `${sensors.canary.checks.length} sensor checks`,
+			name: "sensor canary",
+			ok: sensors.canary.passed,
+		});
+	} catch (error) {
+		checks.push({
+			detail: error instanceof Error ? error.message : "Sensor validation failed.",
+			name: "sensor configuration",
+			ok: false,
+		});
+	}
+	return checks;
+}
+
 export function runDoctor(root: string): DoctorReport {
 	const checks = stateChecks(root);
 	if (checks.some((check) => !check.ok)) {
@@ -76,6 +104,12 @@ export function runDoctor(root: string): DoctorReport {
 	const paths = statePaths(root);
 	const host = detectHost();
 	const manifest = readInstallManifest(root);
+	if (manifest.host.platform === "linux") {
+		checks.push(...linuxSensorChecks(root));
+		if (checks.some((check) => !check.ok)) {
+			return { checks, ok: false };
+		}
+	}
 	const scope = validateLocalScope(readFileSync(paths.scope, "utf8"), host);
 	const capabilityReport = capabilityReportSchema.parse(
 		JSON.parse(readFileSync(paths.capabilityReport, "utf8")),

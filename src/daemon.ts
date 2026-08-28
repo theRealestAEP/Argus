@@ -2,6 +2,7 @@ import { platform } from "node:os";
 
 import { jsonText, writePrivate } from "./files.js";
 import { recordEvidence } from "./evidence-store.js";
+import { runOperationalCycle } from "./operational-loop.js";
 import { statePaths } from "./paths.js";
 
 export interface DaemonHeartbeat {
@@ -47,7 +48,18 @@ export async function runDaemon(
 	const startedAt = new Date();
 	writeHeartbeat(root, startedAt);
 	recordEvidence(root, "daemon.started", `PID ${process.pid}`, startedAt);
-	const timer = setInterval(() => writeHeartbeat(root, startedAt), 30_000);
+	let cycleActive = false;
+	const tick = async () => {
+		writeHeartbeat(root, startedAt);
+		if (cycleActive) {
+			return;
+		}
+		cycleActive = true;
+		await runOperationalCycle(root);
+		cycleActive = false;
+	};
+	await tick();
+	const timer = setInterval(() => void tick(), 30_000);
 	try {
 		await wait();
 	} finally {

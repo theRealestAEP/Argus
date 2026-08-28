@@ -41,11 +41,16 @@ service_group=$(id -gn)
 node_path=$(command -v node)
 
 if [ -f "$state_dir/install-manifest.json" ]; then
-	printf '%s\n' "Administrator authorization installs the boot service."
-	sudo "$node_path" "$project_dir/dist/cli.js" install-service \
-		--state-dir="$state_dir" \
-		--service-user="$service_user" \
-		--service-group="$service_group"
+	host_platform=$(node -p "JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8')).host.platform" "$state_dir/install-manifest.json")
+	if [ "$host_platform" = "linux" ] && [ ! -f "$state_dir/sensor-config.json" ]; then
+		printf '%s\n' "Linux sensor commissioning is incomplete. Run setup again after you configure OPENAI_API_KEY."
+	else
+		printf '%s\n' "Administrator authorization installs the boot service."
+		sudo "$node_path" "$project_dir/dist/cli.js" install-service \
+			--state-dir="$state_dir" \
+			--service-user="$service_user" \
+			--service-group="$service_group"
+	fi
 fi
 
 exit "$setup_status"

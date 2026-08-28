@@ -1,6 +1,7 @@
 .git
 .ids-agent
 coverage
+release
 dist
 node_modules
 *.log

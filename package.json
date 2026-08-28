@@ -2,16 +2,33 @@
   "name": "on-device-ids-agent",
   "version": "0.1.0",
   "private": true,
+  "license": "MIT",
   "description": "A host-bound intrusion detection agent for Linux and macOS.",
   "type": "module",
   "bin": {
-    "ids-agent": "dist/cli.js"
+    "ids-agent": "dist/cli.js",
+    "ids-agent-install-linux": "scripts/install-linux.sh"
   },
+  "files": [
+    "dist",
+    "scripts/install-linux.sh",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "check": "npm run typecheck && npm run lint && npm run docs:lint && npm run test:coverage",
-    "check:all": "npm run check && npm run test:e2e:linux",
+    "check:all": "npm run check && npm run test:e2e:linux && npm run test:e2e:release",
     "demo:e2e:linux": "./scripts/demo-linux-e2e.sh",
+    "demo:onboarding:linux": "./scripts/demo-linux-onboarding.sh",
+		"dist": "node scripts/build-release.mjs",
+		"eval:red-team:agent": "./scripts/eval-agent-red-team.sh prompt-injection",
+		"eval:red-team:expert": "./scripts/eval-expert-red-team.sh",
+		"eval:red-team:expert-suite": "./scripts/eval-expert-red-team-suite.sh",
+		"eval:red-team:hard": "./scripts/eval-hard-red-team.sh",
+		"eval:red-team:hard-suite": "./scripts/eval-hard-red-team-suite.sh",
+		"eval:red-team:scenario": "./scripts/eval-agent-red-team.sh",
+		"eval:red-team:suite": "./scripts/eval-red-team-suite.sh",
     "docs:lint": "markdownlint-cli2 \"**/*.md\" \"#node_modules\" \"#tools/oxlint/anti-slop\"",
     "lint": "oxlint --config oxlint.config.ts src tests",
     "setup:host": "./scripts/setup.sh",
@@ -19,6 +36,7 @@
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "test:e2e:linux": "./scripts/test-linux-e2e.sh",
+    "test:e2e:release": "./scripts/test-release-e2e.sh",
     "test:e2e:model": "npm run build && node --env-file-if-exists=.env tests/e2e/model-evaluation.mjs",
     "test:e2e:setup": "npm run build && node tests/e2e/setup-evaluation.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit"
@@ -27,6 +45,7 @@
     "node": ">=24"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1120.0",
     "openai": "7.8.0",
     "zod": "4.4.3"
   },

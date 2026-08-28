@@ -1,22 +1,39 @@
 #!/usr/bin/env node
 
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
+import { fileURLToPath } from "node:url";
+import { dirname } from "node:path";
 
 import { checkAgentMail, configureAgentMailAllowlist } from "./agent-mail.js";
-import { bootstrap, readInstallManifest } from "./bootstrap.js";
+import { initializeAgentMailCursor } from "./agent-mail.js";
+import { addInstallResources, bootstrap, readInstallManifest } from "./bootstrap.js";
 import { inspectCapabilities, saveCapabilityReport } from "./capabilities.js";
 import type { CapabilityReport, OnboardingAnswers } from "./contracts.js";
-import { onboardingPolicySchema } from "./contracts.js";
+import { evidenceEventSchema, onboardingPolicySchema } from "./contracts.js";
 import { runDoctor } from "./doctor.js";
-import { runDaemon } from "./daemon.js";
+import { runDaemon, waitForStop } from "./daemon.js";
+import {
+	conductGuidedOnboarding,
+	conductSensorPlanReview,
+} from "./guided-onboarding.js";
+import { detectHost } from "./host.js";
+import { applyContainment } from "./containment.js";
+import { runContainmentBroker } from "./containment-broker.js";
+import { containmentPlanSchema } from "./contracts.js";
 import { uninstallPlan } from "./lifecycle.js";
 import { buildMemoryPack, verifyMemoryPack } from "./memory-pack.js";
-import { askOnboardingQuestions, readPolicy, updatePolicy } from "./onboarding.js";
+import { readPolicy, updatePolicy } from "./onboarding.js";
 import { statePaths } from "./paths.js";
+import { initializeReviewSchedule } from "./review-schedule.js";
+import { collectLinuxSnapshot, commissionLinuxSensors } from "./linux-sensors.js";
+import { readSensorConfig } from "./linux-sensors.js";
+import { selectLinuxSensors, type GuidedOnboardingContext } from "./model-runtime.js";
+import { z } from "zod";
 import {
 	buildServicePlan,
+	buildBrokerServicePlan,
 	installService,
 	uninstallService,
 } from "./service.js";
@@ -28,14 +45,18 @@ const parsedArguments = parseArgs({
 	options: {
 		"admin-contact": { type: "string" },
 		"agent-mail-inbox": { type: "string" },
+		"automatic-process-termination": { type: "boolean", default: false },
 		"approved-agent-runtimes": { type: "string", default: "none" },
 		"critical-paths": { type: "string", default: "none" },
 		"device-purpose": { type: "string" },
 		"expected-services": { type: "string", default: "none" },
+		"env-file": { type: "string" },
 		"email-allowed-senders": { type: "string" },
 		"email-report-recipients": { type: "string" },
 		"log-cache-mb": { type: "string", default: "1024" },
 		"maintenance-window": { type: "string" },
+		"install-resource": { type: "string", multiple: true },
+		"plan-file": { type: "string" },
 		"response-mode": { type: "string", default: "approval-required" },
 		"retention-days": { type: "string", default: "30" },
 		"review-schedule": { type: "string", default: "every 2 days" },
@@ -50,6 +71,11 @@ const root =
 	parsedArguments.values["state-dir"] ??
 	process.env.IDS_AGENT_STATE_DIR ??
 	join(process.cwd(), ".ids-agent");
+const applicationDirectory = join(dirname(fileURLToPath(import.meta.url)), "..");
+const environmentFile = parsedArguments.values["env-file"] ?? join(process.cwd(), ".env");
+if (existsSync(environmentFile)) {
+	process.loadEnvFile(environmentFile);
+}
 
 function showHelp(): void {
 	console.log(`Usage: ids-agent <command>
@@ -57,6 +83,10 @@ function showHelp(): void {
 Commands:
   setup          Run first-time setup
   re-onboard     Update the local operating policy
+  commission     Let the agent configure Linux sensors
+  contain        Apply an administrator-approved containment plan
+  broker         Run the privileged Linux containment broker
+  register-install-resources Record installer-owned resources
   daemon         Run the background agent process
   install-service Install and start the boot service
   uninstall-service Stop and remove the boot service
@@ -74,6 +104,32 @@ function optionList(value: string): string[] {
 		: value.split(",").map((item) => item.trim()).filter((item) => item.length > 0);
 }
 
+const heartbeatStatusSchema = z.object({
+	pid: z.number().int().positive(),
+	updatedAt: z.iso.datetime(),
+});
+
+function guidedContext(): GuidedOnboardingContext {
+	const host = detectHost();
+	const baseline = host.platform === "linux" ? collectLinuxSnapshot([]) : null;
+	const observed = baseline === null
+		? { establishedConnectionCount: 0, listenerCount: 0, processCount: 0 }
+		: {
+			establishedConnectionCount: baseline.establishedConnectionCount,
+			listenerCount: baseline.listeners.length,
+			processCount: baseline.processes.length,
+		};
+	return {
+		defaultAgentMailInbox: process.env.IDS_AGENT_AGENTMAIL_INBOX_ID ?? null,
+		host: {
+			arch: host.arch,
+			hostname: host.hostname,
+			platform: host.platform,
+		},
+		observed,
+	};
+}
+
 async function onboardingAnswers(): Promise<OnboardingAnswers> {
 	const purpose = parsedArguments.values["device-purpose"];
 	const contact = parsedArguments.values["admin-contact"];
@@ -84,7 +140,7 @@ async function onboardingAnswers(): Promise<OnboardingAnswers> {
 	if (purpose !== undefined || contact !== undefined || window !== undefined) {
 		throw new Error("Provide device purpose and maintenance window or answer the prompts.");
 	}
-	return askOnboardingQuestions();
+	return conductGuidedOnboarding(guidedContext());
 }
 
 function nonInteractiveAnswers(
@@ -98,6 +154,7 @@ function nonInteractiveAnswers(
 	return onboardingPolicySchema.omit({ createdAt: true }).parse({
 		adminContact: contact ?? "local-only",
 		agentMailInbox: inbox === "skip" ? null : inbox,
+		automaticProcessTermination: parsedArguments.values["automatic-process-termination"],
 		approvedAgentRuntimes: optionList(parsedArguments.values["approved-agent-runtimes"]),
 		criticalPaths: optionList(parsedArguments.values["critical-paths"]),
 		devicePurpose: purpose,
@@ -124,16 +181,58 @@ function showCapabilities(report: CapabilityReport): void {
 	}
 }
 
-function refreshCapabilities(): CapabilityReport {
+function refreshCapabilities(showReport = true): CapabilityReport {
 	const report = inspectCapabilities();
 	saveCapabilityReport(root, report);
-	showCapabilities(report);
+	if (showReport) {
+		showCapabilities(report);
+	}
 	return report;
+}
+
+function showSetupSummary(
+	hostname: string,
+	report: CapabilityReport,
+	sensorPlanSaved: boolean,
+): void {
+	console.log(`\nArgus: Setup saved for ${hostname}.`);
+	if (sensorPlanSaved) {
+		console.log("Argus: The Linux monitoring plan is ready.");
+	}
+	if (report.ready) {
+		console.log("Argus: Host access is ready.");
+	} else {
+		const pendingCount = report.probes.filter((probe) => probe.status !== "ready").length;
+		console.log(`Argus: Host access is limited. ${pendingCount} administrator actions remain.`);
+		console.log("Argus: Run `ids-agent doctor` for the action list.");
+	}
+	console.log("Argus: Run the daemon or install the boot service to start continuous monitoring.");
 }
 
 function requireSetup(): void {
 	if (!existsSync(statePaths(root).installManifest)) {
 		throw new Error("Setup is incomplete. Run: ids-agent setup");
+	}
+}
+
+async function commissionLinux(
+	answers: OnboardingAnswers,
+	createdAt: string,
+): Promise<boolean> {
+	const baseline = collectLinuxSnapshot(answers.criticalPaths);
+	try {
+		const policy = { ...answers, createdAt };
+		const proposedSelection = await selectLinuxSensors(policy, baseline);
+		const selection = process.stdin.isTTY === true
+			? await conductSensorPlanReview(policy, baseline, proposedSelection)
+			: proposedSelection;
+		const sensors = commissionLinuxSensors(root, policy, selection, baseline);
+		console.log(`Argus: Monitoring plan saved. Sensor interval: ${sensors.pollIntervalSeconds} seconds.`);
+		return true;
+	} catch (error) {
+		const detail = error instanceof Error ? error.message : "Sensor commissioning failed.";
+		console.log(`Linux sensors: action required. ${detail}`);
+		return false;
 	}
 }
 
@@ -165,36 +264,48 @@ async function showAgentMail(
 
 async function setup(): Promise<void> {
 	if (existsSync(statePaths(root).installManifest)) {
+		const manifest = readInstallManifest(root);
+		if (manifest.host.platform === "linux" && !existsSync(statePaths(root).sensorConfig)) {
+			await commissionLinux(readPolicy(root), manifest.createdAt);
+			return;
+		}
 		console.log("Setup is already complete. Run re-onboard to update policy.");
 		return;
 	}
 	const answers = await onboardingAnswers();
 	const manifest = bootstrap(root, answers);
-	const capabilityReport = refreshCapabilities();
+	initializeReviewSchedule(root, answers.reviewSchedule);
+	initializeAgentMailCursor(root);
+	let sensorPlanSaved = false;
+	if (manifest.host.platform === "linux") {
+		sensorPlanSaved = await commissionLinux(answers, manifest.createdAt);
+	}
+	const capabilityReport = refreshCapabilities(false);
 	await showAgentMail(
 		answers.agentMailInbox,
 		answers.emailAllowedSenders,
 		answers.emailReportRecipients,
 	);
-	console.log(`Local setup saved for ${manifest.host.hostname}.`);
 	console.log(`State directory: ${root}`);
 	if (answers.adminContact === "local-only") {
 		console.log("External alert delivery is deferred. Reports will remain in local state.");
 		console.log("Use the local CLI to review status and reports.");
 	}
-	if (capabilityReport.ready) {
-		console.log("Host commissioning is complete.");
-	} else {
-		console.log("Complete each TODO action, then run: ids-agent access");
-	}
-	doctor();
+	showSetupSummary(manifest.host.hostname, capabilityReport, sensorPlanSaved);
+	process.exitCode = runDoctor(root).ok ? 0 : 1;
 }
 
 async function reOnboard(): Promise<void> {
 	requireSetup();
 	const answers = await onboardingAnswers();
 	updatePolicy(root, answers);
-	refreshCapabilities();
+	initializeReviewSchedule(root, answers.reviewSchedule);
+	initializeAgentMailCursor(root);
+	const manifest = readInstallManifest(root);
+	if (manifest.host.platform === "linux") {
+		await commissionLinux(answers, manifest.createdAt);
+	}
+	refreshCapabilities(false);
 	await showAgentMail(
 		answers.agentMailInbox,
 		answers.emailAllowedSenders,
@@ -203,15 +314,62 @@ async function reOnboard(): Promise<void> {
 	console.log("The local operating policy is updated.");
 }
 
+async function commission(): Promise<void> {
+	requireSetup();
+	const manifest = readInstallManifest(root);
+	if (manifest.host.platform !== "linux") {
+		console.log("Linux sensor commissioning applies to Linux hosts.");
+		return;
+	}
+	await commissionLinux(readPolicy(root), manifest.createdAt);
+}
+
 function status(): void {
 	requireSetup();
 	const manifest = readInstallManifest(root);
+	const paths = statePaths(root);
 	console.log(`Agent: ${manifest.agentId}`);
 	console.log(`Host: ${manifest.host.hostname}`);
 	console.log(`Platform: ${manifest.host.platform}/${manifest.host.arch}`);
 	console.log("Scope: this host only");
 	const inbox = readPolicy(root).agentMailInbox;
 	console.log(`Agent Mail: ${inbox ?? "local-only"}`);
+	if (existsSync(paths.heartbeat)) {
+		const heartbeat = heartbeatStatusSchema.parse(
+			JSON.parse(readFileSync(paths.heartbeat, "utf8")),
+		);
+		console.log(`Last daemon heartbeat: ${heartbeat.updatedAt} (PID ${heartbeat.pid})`);
+	} else {
+		console.log("Daemon: no heartbeat recorded");
+	}
+	if (manifest.host.platform === "linux" && existsSync(paths.sensorConfig)) {
+		const sensors = readSensorConfig(root);
+		const selected = [
+			["authentication", sensors.selection.authentication],
+			["critical files", sensors.selection.criticalFiles],
+			["listeners", sensors.selection.listeners],
+			["network connections", sensors.selection.networkConnections],
+			["processes", sensors.selection.processes],
+		]
+			.filter(([, enabled]) => enabled)
+			.map(([name]) => name);
+		console.log(`Sensors: ${selected.join(", ")} (every ${sensors.pollIntervalSeconds} seconds)`);
+	}
+	console.log(`Pending alerts: ${readdirSync(paths.alerts).length}`);
+	console.log(`Active investigations: ${readdirSync(paths.alertWorking).length}`);
+	console.log(`Local reports: ${readdirSync(paths.reports).length}`);
+	const operatorMessageCount = existsSync(paths.operatorMessages)
+		? readdirSync(paths.operatorMessages).length
+		: 0;
+	console.log(`Operator messages: ${operatorMessageCount}`);
+	if (existsSync(paths.eventLog)) {
+		const latest = readFileSync(paths.eventLog, "utf8").trim().split("\n").at(-1);
+		if (latest !== undefined && latest.length > 0) {
+			const event = evidenceEventSchema.parse(JSON.parse(latest));
+			console.log(`Latest activity: ${event.recordedAt} ${event.event} — ${event.detail}`);
+		}
+	}
+	console.log(`Activity log: ${paths.eventLog}`);
 }
 
 function doctor(): void {
@@ -252,7 +410,8 @@ function servicePlan() {
 	return buildServicePlan(
 		manifest.host.platform,
 		root,
-		process.cwd(),
+		applicationDirectory,
+		environmentFile,
 		process.execPath,
 		serviceOption("service-user"),
 		serviceOption("service-group"),
@@ -262,6 +421,13 @@ function servicePlan() {
 function installBootService(): void {
 	requireSetup();
 	const plan = servicePlan();
+	const manifest = readInstallManifest(root);
+	if (manifest.host.platform === "linux") {
+		installService(
+			buildBrokerServicePlan(root, applicationDirectory, process.execPath),
+			process.geteuid?.() ?? -1,
+		);
+	}
 	installService(plan, process.geteuid?.() ?? -1);
 	console.log(`Installed and started ${plan.label}.`);
 }
@@ -270,7 +436,44 @@ function uninstallBootService(): void {
 	requireSetup();
 	const plan = servicePlan();
 	uninstallService(plan, process.geteuid?.() ?? -1);
+	const manifest = readInstallManifest(root);
+	if (manifest.host.platform === "linux") {
+		uninstallService(
+			buildBrokerServicePlan(root, applicationDirectory, process.execPath),
+			process.geteuid?.() ?? -1,
+		);
+	}
 	console.log(`Stopped and removed ${plan.label}.`);
+}
+
+function contain(): void {
+	requireSetup();
+	const planPath = parsedArguments.values["plan-file"];
+	if (planPath === undefined) {
+		throw new Error("Provide --plan-file.");
+	}
+	const plan = containmentPlanSchema.parse(JSON.parse(readFileSync(planPath, "utf8")));
+	const receipt = applyContainment(
+		root,
+		readPolicy(root),
+		plan,
+		process.geteuid?.() ?? -1,
+	);
+	console.log(`Containment applied: ${receipt.action} ${receipt.target}`);
+	console.log(`Rollback: ${receipt.rollback}`);
+}
+
+function registerInstallResources(): void {
+	requireSetup();
+	if ((process.geteuid?.() ?? -1) !== 0) {
+		throw new Error("Administrator authorization is required to register install resources.");
+	}
+	const resources = parsedArguments.values["install-resource"] ?? [];
+	if (resources.length === 0) {
+		throw new Error("Provide at least one --install-resource.");
+	}
+	addInstallResources(root, resources);
+	console.log(`Recorded ${resources.length} installer resources.`);
 }
 
 async function runServiceCommand(): Promise<boolean> {
@@ -284,6 +487,19 @@ async function runServiceCommand(): Promise<boolean> {
 			return true;
 		case "uninstall-service":
 			uninstallBootService();
+			return true;
+		case "commission":
+			await commission();
+			return true;
+		case "contain":
+			contain();
+			return true;
+		case "broker":
+			requireSetup();
+			await runContainmentBroker(root, waitForStop);
+			return true;
+		case "register-install-resources":
+			registerInstallResources();
 			return true;
 		default:
 			return false;

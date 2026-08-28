@@ -6,6 +6,10 @@ import type { HostIdentity } from "./contracts.js";
 export const LINUX_SERVICE_PATH = "/etc/systemd/system/argus-ids.service";
 export const LINUX_SERVICE_LINK =
 	"/etc/systemd/system/multi-user.target.wants/argus-ids.service";
+export const LINUX_BROKER_SERVICE_PATH =
+	"/etc/systemd/system/argus-ids-broker.service";
+export const LINUX_BROKER_SERVICE_LINK =
+	"/etc/systemd/system/multi-user.target.wants/argus-ids-broker.service";
 export const MACOS_SERVICE_PATH =
 	"/Library/LaunchDaemons/com.argus.ids-agent.plist";
 
@@ -44,20 +48,26 @@ export function serviceResourcePaths(
 	platformName: HostIdentity["platform"],
 ): string[] {
 	return platformName === "linux"
-		? [LINUX_SERVICE_PATH, LINUX_SERVICE_LINK]
+		? [
+			LINUX_SERVICE_PATH,
+			LINUX_SERVICE_LINK,
+			LINUX_BROKER_SERVICE_PATH,
+			LINUX_BROKER_SERVICE_LINK,
+		]
 		: [MACOS_SERVICE_PATH];
 }
 
 function linuxServicePlan(
 	root: string,
 	projectDirectory: string,
+	environmentFile: string,
 	nodePath: string,
 	serviceUser: string,
 	serviceGroup: string,
 ): ServicePlan {
 	const command = [
 		systemdValue(nodePath),
-		systemdValue(`--env-file-if-exists=${projectDirectory}/.env`),
+		systemdValue(`--env-file-if-exists=${environmentFile}`),
 		systemdValue(`${projectDirectory}/dist/cli.js`),
 		"daemon",
 		systemdValue(`--state-dir=${root}`),
@@ -65,14 +75,14 @@ function linuxServicePlan(
 	return {
 		content: `[Unit]
 Description=Argus on-device intrusion detection agent
-After=network-online.target
+After=network-online.target argus-ids-broker.service
 Wants=network-online.target
 
 [Service]
 Type=simple
 User=${serviceUser}
 Group=${serviceGroup}
-WorkingDirectory=${systemdValue(projectDirectory)}
+WorkingDirectory=${systemdValue(root)}
 ExecStart=${command}
 Restart=on-failure
 RestartSec=5
@@ -111,9 +121,73 @@ WantedBy=multi-user.target
 	};
 }
 
+export function buildBrokerServicePlan(
+	root: string,
+	projectDirectory: string,
+	nodePath: string,
+): ServicePlan {
+	const command = [
+		systemdValue(nodePath),
+		systemdValue(`${projectDirectory}/dist/cli.js`),
+		"broker",
+		systemdValue(`--state-dir=${root}`),
+	].join(" ");
+	return {
+		content: `[Unit]
+Description=Argus privileged containment broker
+Before=argus-ids.service
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=${systemdValue(root)}
+ExecStart=${command}
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=${systemdValue(root)}
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_KILL
+AmbientCapabilities=CAP_NET_ADMIN CAP_KILL
+
+[Install]
+WantedBy=multi-user.target
+`,
+		disable: [
+			{
+				args: ["disable", "--now", "argus-ids-broker.service"],
+				command: "/usr/bin/systemctl",
+				ignoreFailure: true,
+			},
+			{
+				args: ["daemon-reload"],
+				command: "/usr/bin/systemctl",
+				ignoreFailure: false,
+			},
+		],
+		enable: [
+			{
+				args: ["daemon-reload"],
+				command: "/usr/bin/systemctl",
+				ignoreFailure: false,
+			},
+			{
+				args: ["enable", "--now", "argus-ids-broker.service"],
+				command: "/usr/bin/systemctl",
+				ignoreFailure: false,
+			},
+		],
+		label: "argus-ids-broker.service",
+		path: LINUX_BROKER_SERVICE_PATH,
+	};
+}
+
 function macosServicePlan(
 	root: string,
 	projectDirectory: string,
+	environmentFile: string,
 	nodePath: string,
 	serviceUser: string,
 ): ServicePlan {
@@ -127,13 +201,13 @@ function macosServicePlan(
   <key>ProgramArguments</key>
   <array>
 	    <string>${xml(nodePath)}</string>
-	    <string>${xml(`--env-file-if-exists=${projectDirectory}/.env`)}</string>
+	    <string>${xml(`--env-file-if-exists=${environmentFile}`)}</string>
 	    <string>${xml(`${projectDirectory}/dist/cli.js`)}</string>
     <string>daemon</string>
     <string>${xml(`--state-dir=${root}`)}</string>
   </array>
   <key>WorkingDirectory</key>
-  <string>${xml(projectDirectory)}</string>
+	<string>${xml(root)}</string>
   <key>UserName</key>
   <string>${xml(serviceUser)}</string>
   <key>RunAtLoad</key>
@@ -177,6 +251,7 @@ export function buildServicePlan(
 	platformName: HostIdentity["platform"],
 	root: string,
 	projectDirectory: string,
+	environmentFile: string,
 	nodePath: string,
 	serviceUser: string,
 	serviceGroup: string,
@@ -189,11 +264,12 @@ export function buildServicePlan(
 		? linuxServicePlan(
 				root,
 				projectDirectory,
+				environmentFile,
 				nodePath,
 				serviceUser,
 				serviceGroup,
 			)
-		: macosServicePlan(root, projectDirectory, nodePath, serviceUser);
+		: macosServicePlan(root, projectDirectory, environmentFile, nodePath, serviceUser);
 }
 
 export function nativeServiceGateway(): ServiceGateway {

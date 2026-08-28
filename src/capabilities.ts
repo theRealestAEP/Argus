@@ -88,6 +88,10 @@ function linuxProbes(): CapabilityProbe[] {
 	const auditPath = "/var/log/audit/audit.log";
 	const journalReady = commandExists("journalctl") && canRun("journalctl", ["--no-pager", "-n", "1"]);
 	const firewallReady = commandExists("nft") || commandExists("iptables");
+	const brokerReady = commandExists("systemctl") && canRun(
+		"systemctl",
+		["is-active", "--quiet", "argus-ids-broker.service"],
+	);
 	return [
 		probe(
 			"linux-journal",
@@ -120,7 +124,7 @@ function linuxProbes(): CapabilityProbe[] {
 		probe(
 			"linux-mitigation-broker",
 			"mitigate",
-			false,
+			brokerReady,
 			"Perform approved process, service, account, and firewall actions.",
 			"Install the root-owned broker with its fixed action allowlist.",
 		),
