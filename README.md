@@ -4,7 +4,7 @@
 
 *Image source: [Ancient Origins](https://www.ancient-origins.net/myths-legends-europe/argos-panoptes-001044).*
 
-Argus protects one Linux or macOS host. It maps the host, records intended use,
+Argus is an on device agent that dynamically maps the host, records intended use,
 builds mechanical sensors, investigates alerts, and applies policy-approved
 containment.
 
