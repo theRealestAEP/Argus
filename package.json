@@ -1,0 +1,42 @@
+{
+  "name": "on-device-ids-agent",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A host-bound intrusion detection agent for Linux and macOS.",
+  "type": "module",
+  "bin": {
+    "ids-agent": "dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "check": "npm run typecheck && npm run lint && npm run docs:lint && npm run test:coverage",
+    "check:all": "npm run check && npm run test:e2e:linux",
+    "demo:e2e:linux": "./scripts/demo-linux-e2e.sh",
+    "docs:lint": "markdownlint-cli2 \"**/*.md\" \"#node_modules\" \"#tools/oxlint/anti-slop\"",
+    "lint": "oxlint --config oxlint.config.ts src tests",
+    "setup:host": "./scripts/setup.sh",
+    "start": "node dist/cli.js",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "test:e2e:linux": "./scripts/test-linux-e2e.sh",
+    "test:e2e:model": "npm run build && node --env-file-if-exists=.env tests/e2e/model-evaluation.mjs",
+    "test:e2e:setup": "npm run build && node tests/e2e/setup-evaluation.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "dependencies": {
+    "openai": "7.8.0",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@oxlint/plugins": "1.80.0",
+    "@types/node": "26.4.0",
+    "@vitest/coverage-v8": "4.1.11",
+    "markdownlint-cli2": "0.23.2",
+    "oxlint": "1.80.0",
+    "typescript": "7.0.2",
+    "vitest": "4.1.11"
+  }
+}
