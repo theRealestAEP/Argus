@@ -12,8 +12,10 @@ import {
 	LINUX_SERVICE_PATH,
 	LINUX_BROKER_SERVICE_LINK,
 	LINUX_BROKER_SERVICE_PATH,
+	MACOS_BROKER_SERVICE_PATH,
 	MACOS_SERVICE_PATH,
 	buildBrokerServicePlan,
+	buildMacosBrokerServicePlan,
 	buildServicePlan,
 	installService,
 	nativeServiceGateway,
@@ -82,7 +84,22 @@ describe("boot service", () => {
 		);
 		expect(plan.content).toContain("/opt/argus&lt;app&gt;");
 		expect(plan.content).toContain("/var/argus&amp;state");
-		expect(serviceResourcePaths("darwin")).toEqual([MACOS_SERVICE_PATH]);
+		expect(serviceResourcePaths("darwin")).toEqual([
+			MACOS_SERVICE_PATH,
+			MACOS_BROKER_SERVICE_PATH,
+		]);
+	});
+
+	test("builds a root macOS containment broker", () => {
+		const plan = buildMacosBrokerServicePlan(
+			"/Library/Application Support/Argus/state",
+			"/usr/local/lib/node_modules/on-device-ids-agent",
+			"/opt/homebrew/bin/node",
+		);
+		expect(plan.path).toBe(MACOS_BROKER_SERVICE_PATH);
+		expect(plan.content).toContain("com.argus.ids-agent.broker");
+		expect(plan.content).toContain("<string>root</string>");
+		expect(plan.content).toContain("<string>broker</string>");
 	});
 
 	test("requires administrator authorization", () => {

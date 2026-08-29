@@ -9,6 +9,6 @@ npm run dist
 docker run --rm \
 	--volume "$project_dir/release:/release:ro" \
 	node:24-bookworm-slim \
-	sh -c 'npm install --global /release/*.tgz >/dev/null && ids-agent help | grep "Run first-time setup"'
+	sh -c 'npm install --global /release/*.tgz >/dev/null && ids-agent help | grep "Run first-time setup" && command -v ids-agent-install-macos'
 
 printf '%s\n' "Release archive evaluation passed."

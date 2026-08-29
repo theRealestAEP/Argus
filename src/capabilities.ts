@@ -52,6 +52,10 @@ function probe(
 
 function macProbes(): CapabilityProbe[] {
 	const root = process.geteuid?.() === 0;
+	const brokerReady = canRun(
+		"/bin/launchctl",
+		["print", "system/com.argus.ids-agent.broker"],
+	);
 	return [
 		probe(
 			"macos-unified-log",
@@ -77,7 +81,7 @@ function macProbes(): CapabilityProbe[] {
 		probe(
 			"macos-mitigation-broker",
 			"mitigate",
-			false,
+			brokerReady,
 			"Perform approved process, service, account, and firewall actions.",
 			"Install the signed privileged broker and approve it with native administrator authentication.",
 		),

@@ -7,11 +7,14 @@
   "type": "module",
   "bin": {
     "ids-agent": "dist/cli.js",
-    "ids-agent-install-linux": "scripts/install-linux.sh"
+    "ids-agent-install-linux": "scripts/install-linux.sh",
+    "ids-agent-install-macos": "scripts/install-macos.sh"
   },
   "files": [
     "dist",
     "scripts/install-linux.sh",
+    "scripts/install-macos.sh",
+    ".env.example",
     "README.md",
     "LICENSE"
   ],

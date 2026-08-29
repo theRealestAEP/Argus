@@ -12,6 +12,8 @@ export const LINUX_BROKER_SERVICE_LINK =
 	"/etc/systemd/system/multi-user.target.wants/argus-ids-broker.service";
 export const MACOS_SERVICE_PATH =
 	"/Library/LaunchDaemons/com.argus.ids-agent.plist";
+export const MACOS_BROKER_SERVICE_PATH =
+	"/Library/LaunchDaemons/com.argus.ids-agent.broker.plist";
 
 export interface ServiceCommand {
 	args: string[];
@@ -54,7 +56,7 @@ export function serviceResourcePaths(
 			LINUX_BROKER_SERVICE_PATH,
 			LINUX_BROKER_SERVICE_LINK,
 		]
-		: [MACOS_SERVICE_PATH];
+		: [MACOS_SERVICE_PATH, MACOS_BROKER_SERVICE_PATH];
 }
 
 function linuxServicePlan(
@@ -181,6 +183,64 @@ WantedBy=multi-user.target
 		],
 		label: "argus-ids-broker.service",
 		path: LINUX_BROKER_SERVICE_PATH,
+	};
+}
+
+export function buildMacosBrokerServicePlan(
+	root: string,
+	projectDirectory: string,
+	nodePath: string,
+): ServicePlan {
+	return {
+		content: `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.argus.ids-agent.broker</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>${xml(nodePath)}</string>
+    <string>${xml(`${projectDirectory}/dist/cli.js`)}</string>
+    <string>broker</string>
+    <string>${xml(`--state-dir=${root}`)}</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>${xml(root)}</string>
+  <key>UserName</key>
+  <string>root</string>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>StandardOutPath</key>
+  <string>${xml(`${root}/runtime/broker.log`)}</string>
+  <key>StandardErrorPath</key>
+  <string>${xml(`${root}/runtime/broker-error.log`)}</string>
+</dict>
+</plist>
+`,
+		disable: [{
+			args: ["bootout", "system/com.argus.ids-agent.broker"],
+			command: "/bin/launchctl",
+			ignoreFailure: true,
+		}],
+		enable: [
+			{
+				args: ["bootout", "system/com.argus.ids-agent.broker"],
+				command: "/bin/launchctl",
+				ignoreFailure: true,
+			},
+			{
+				args: ["bootstrap", "system", MACOS_BROKER_SERVICE_PATH],
+				command: "/bin/launchctl",
+				ignoreFailure: false,
+			},
+		],
+		label: "com.argus.ids-agent.broker",
+		path: MACOS_BROKER_SERVICE_PATH,
 	};
 }
 

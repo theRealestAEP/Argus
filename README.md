@@ -43,6 +43,51 @@ The installer creates the `argus-ids` account and starts two systemd services.
 One service runs Argus. A root broker validates and applies containment. Both
 services start after a reboot.
 
+### Mac Studio
+
+Install from source before the first GitHub release:
+
+```sh
+git clone https://github.com/theRealestAEP/Argus.git
+cd Argus
+cp .env.example .env
+nano .env
+./scripts/setup.sh
+```
+
+After release `v0.1.0`, install its verified archive:
+
+```sh
+curl -fLo .env https://raw.githubusercontent.com/theRealestAEP/Argus/v0.1.0/.env.example
+nano .env
+curl -fLO https://github.com/theRealestAEP/Argus/releases/download/v0.1.0/on-device-ids-agent-0.1.0.tgz
+curl -fLO https://github.com/theRealestAEP/Argus/releases/download/v0.1.0/SHA256SUMS
+shasum -a 256 -c SHA256SUMS
+sudo npm install --global ./on-device-ids-agent-0.1.0.tgz
+sudo ids-agent-install-macos "$PWD/.env"
+```
+
+The installer creates two LaunchDaemons. One runs Argus as your macOS account.
+The other runs the containment broker as root.
+
+## Updates
+
+Check GitHub Releases:
+
+```sh
+ids-agent update-check
+```
+
+Install a checksum-verified update and restart both services:
+
+```sh
+sudo ids-agent update \
+  --state-dir="/Library/Application Support/Argus/state" \
+  --env-file="/Library/Application Support/Argus/config/env"
+```
+
+Source installations use `git pull`, `npm ci`, and `npm run build`.
+
 ## Operations
 
 ```sh
@@ -96,6 +141,9 @@ npm run eval:red-team:suite
 npm run eval:red-team:hard-suite
 npm run eval:red-team:expert-suite
 ```
+
+See the [security evaluation report](SECURITY-EVALUATION.md) for the scenario
+catalog and current results.
 
 The standard suite tests common service attacks. The hard suite tests host
 sensors and Argus integrity. The expert suite tests hidden network exploit

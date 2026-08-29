@@ -30,10 +30,17 @@ import { initializeReviewSchedule } from "./review-schedule.js";
 import { collectLinuxSnapshot, commissionLinuxSensors } from "./linux-sensors.js";
 import { readSensorConfig } from "./linux-sensors.js";
 import { selectLinuxSensors, type GuidedOnboardingContext } from "./model-runtime.js";
+import {
+	checkSoftwareUpdate,
+	installSoftwareUpdate,
+	isGlobalSoftwareInstall,
+	readSoftwareVersion,
+} from "./software-update.js";
 import { z } from "zod";
 import {
 	buildServicePlan,
 	buildBrokerServicePlan,
+	buildMacosBrokerServicePlan,
 	installService,
 	uninstallService,
 } from "./service.js";
@@ -94,6 +101,8 @@ Commands:
   status         Show the local agent identity
   doctor         Check local state and host binding
   memory-pack    Build and verify the current memory pack
+  update-check   Check the latest GitHub release
+  update         Verify and install the latest GitHub release
   uninstall-plan List agent-owned resources in removal order
   help           Show this help`);
 }
@@ -427,6 +436,11 @@ function installBootService(): void {
 			buildBrokerServicePlan(root, applicationDirectory, process.execPath),
 			process.geteuid?.() ?? -1,
 		);
+	} else {
+		installService(
+			buildMacosBrokerServicePlan(root, applicationDirectory, process.execPath),
+			process.geteuid?.() ?? -1,
+		);
 	}
 	installService(plan, process.geteuid?.() ?? -1);
 	console.log(`Installed and started ${plan.label}.`);
@@ -442,8 +456,43 @@ function uninstallBootService(): void {
 			buildBrokerServicePlan(root, applicationDirectory, process.execPath),
 			process.geteuid?.() ?? -1,
 		);
+	} else {
+		uninstallService(
+			buildMacosBrokerServicePlan(root, applicationDirectory, process.execPath),
+			process.geteuid?.() ?? -1,
+		);
 	}
 	console.log(`Stopped and removed ${plan.label}.`);
+}
+
+async function showUpdateCheck(): Promise<void> {
+	const currentVersion = readSoftwareVersion(applicationDirectory);
+	const release = await checkSoftwareUpdate(currentVersion);
+	console.log(`Installed version: ${release.currentVersion}`);
+	console.log(`Latest version: ${release.latestVersion}`);
+	console.log(release.updateAvailable ? "Update available." : "Argus is current.");
+	console.log(`Release: ${release.releaseUrl}`);
+}
+
+async function updateSoftware(): Promise<void> {
+	requireSetup();
+	if (!isGlobalSoftwareInstall(applicationDirectory)) {
+		throw new Error("This Argus copy uses a source checkout. Update it with git, npm ci, and npm run build.");
+	}
+	const manifest = readInstallManifest(root);
+	const currentVersion = readSoftwareVersion(applicationDirectory);
+	const release = await installSoftwareUpdate(
+		root,
+		currentVersion,
+		manifest.host.platform,
+		process.geteuid?.() ?? -1,
+	);
+	if (!release.updateAvailable) {
+		console.log(`Argus ${release.currentVersion} is current.`);
+		return;
+	}
+	console.log(`Updated Argus from ${release.currentVersion} to ${release.latestVersion}.`);
+	console.log(`Rollback release: https://github.com/theRealestAEP/Argus/releases/tag/v${release.currentVersion}`);
 }
 
 function contain(): void {
@@ -500,6 +549,19 @@ async function runServiceCommand(): Promise<boolean> {
 			return true;
 		case "register-install-resources":
 			registerInstallResources();
+			return true;
+		default:
+			return runUpdateCommand();
+	}
+}
+
+async function runUpdateCommand(): Promise<boolean> {
+	switch (command) {
+		case "update-check":
+			await showUpdateCheck();
+			return true;
+		case "update":
+			await updateSoftware();
 			return true;
 		default:
 			return false;
