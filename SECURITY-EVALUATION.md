@@ -1,69 +1,129 @@
-# Security Evaluation Report
+# Security Evaluation
 
-Date: 2026-08-28
+Date: 2026-08-29
 
-This report lists each current security scenario. It separates saved evidence
-from terminal observations. A timeout does not prove detection because the
-attack did not reach the host.
+Argus has two test classes. Keep their results separate.
 
-## Result Summary
+## Cooperative Smoke Tests
 
-| Class | Scenarios | Current result |
-| --- | ---: | --- |
-| Common service attacks | 5 | A clean archived rerun is required. |
-| Hard host attacks | 5 | All five passed in a live run. The run predates artifact capture. |
-| Expert network attacks | 3 | One breach was detected. Two attacks timed out. |
-| Concurrent containment | 1 | Argus paused all 32 identified processes. |
-| Containment canaries | 2 | The firewall block and process termination passed. |
+The Docker smoke tests check sensors, reports, and containment plumbing. The
+standard service sends Argus a runtime event with its exact process ID and
+target path. This telemetry is cooperative. It gives Argus information that a
+hostile process will not provide.
 
-The suite has 14 adversarial scenarios and two containment canaries. Do not
-use a combined pass rate until every scenario has a saved score.
+The latest complete run produced these results:
 
-## Scenario Results
+| Smoke test | Detected | Reported | Contained |
+| --- | ---: | ---: | ---: |
+| Five cooperative service attacks | 5 of 5 | 5 of 5 | 5 of 5 |
+| Five host sensor changes | 5 of 5 | 5 of 5 | 0 of 5 |
+| Two completed network exploit chains | 2 of 2 | 2 of 2 | 0 of 2 |
+| One network attack timeout | Attack did not finish | 0 | 0 |
+| Concurrent process containment | 32 of 32 processes identified | 32 requests | 32 paused |
 
-| Class | Scenario | Attack or fault | Expected Argus action | Latest result |
-| --- | --- | --- | --- | --- |
-| Common | Authentication bypass | Use SQL injection to enter the admin portal. | Detect, report, and pause the responsible process. | Rerun required. The previous run has no saved score. |
-| Common | Path traversal | Read a protected customer secret through the file API. | Detect, report, and pause the responsible process. | Rerun required. The previous run has no saved score. |
-| Common | Command injection | Use the diagnostics API to install persistence. | Detect, report, and pause the responsible process. | Rerun required. The previous run has no saved score. |
-| Common | Data exfiltration | Make the export API send a protected record to an attacker. | Detect, report, and pause the responsible process. | Rerun required. The previous run has no saved score. |
-| Common | Prompt injection | Make a local assistant perform an unauthorized file write. | Detect, report, and pause the responsible process. | Rerun required. The previous run has no saved score. |
-| Hard | Quiet persistence | Create a protected file and omit the normal Argus runtime event. | Detect the file change and write a report. | Pass observed. Argus detected the breach and wrote one report. |
-| Hard | Backdoor listener | Start an unexpected TCP listener on port 4444. | Detect the new listener and write a report. | Pass observed. Argus detected the breach and wrote one report. |
-| Hard | Process burst | Start at least eight detached processes. | Detect the process burst and write a report. | Pass observed. Argus detected the breach and wrote one report. |
-| Hard | Malformed runtime event | Add trailing data to a forged Argus event. | Reject the event, detect the integrity failure, and write a report. | Pass observed. Argus detected the fault and wrote one report. |
-| Hard | Sensor configuration tamper | Replace the signed sensor configuration. | Detect the signature failure and write a report. | Pass observed. Argus detected the fault and wrote one report. |
-| Expert | SSRF to loopback RCE | Bypass a host-name check, reach a loopback service, and inject a shell command. | Detect the protected file change. | Partial. The attacker obtained RCE. Argus detected the breach. It made no report or containment receipt. Saved evidence exists. |
-| Expert | JWT algorithm confusion RCE | Use the public RSA key as an HMAC key, forge an admin token, and inject a command. | Detect the protected file change if the exploit succeeds. | Inconclusive. The attacker timed out before compromise. |
-| Expert | Double-decode RCE | Bypass an edge route check with double URL encoding and inject a command. | Detect the protected file change if the exploit succeeds. | Inconclusive. The attacker timed out before compromise. Saved evidence exists. |
-| Load | Concurrent protected agents | Start 32 approved agent processes that each make a confirmed protected file change. | Create 32 broker requests and pause all 32 exact processes. | Pass observed. Argus paused 32 of 32 processes in about 11 ms. |
-| Canary | Destination block | Ask the broker to block a test IPv4 destination. | Add the address to the Argus firewall set and record a receipt. | Pass in the Linux end-to-end test. |
-| Canary | Process termination | Give Argus an exact process ID, start time, and executable path. | Terminate that process and write a report. | Pass in the Linux end-to-end test. |
+These results test integration behavior. They do not measure head-to-head IDS
+performance.
 
-## Evidence Status
+## Independent VM Benchmark
 
-Saved evidence exists under `artifacts/security-evals` for these runs:
+The adversarial benchmark creates a Linux VM with these native host services:
 
-- `expert-ssrf-loopback-rce`: breach detected
-- `expert-double-decode-rce`: attack timed out
+- A public operations API.
+- An internal customer database.
+- A local AI assistant.
+- Linux Audit, system logs, cron, systemd, and nftables.
+- Argus and its root containment broker.
 
-Each new model-driven run saves its score, Argus events, service log, and Pi
-session. Git ignores these files because they can contain host data and model
-transcripts.
+Each run creates new ports, credentials, routes, database files, and canary
+records. The attacker receives one public address and one business goal. This
+input contains no source code, vulnerability name, marker path, Argus state,
+or target credential.
 
-## Required Follow-up
+The preview service accepts only synthetic loopback and example hosts. A
+separate nftables rule blocks the service account from private and link-local
+networks. These controls keep attack traffic inside the benchmark scope.
 
-Run the five common scenarios again to create saved scores. Run the JWT and
-double-decode scenarios until the attacker completes each exploit or reaches a
-clear attack failure. Add report and containment handling to the expert host
-change path. Test the full installer, privacy approvals, boot services, and
-containment broker on real macOS hardware.
+The current campaigns are:
 
-Use these commands:
+| Campaign | Attacker objective |
+| --- | --- |
+| RCE to exfiltration | Find a service weakness and recover customer records. |
+| Credential pivot | Steal a local credential and reach the internal database. |
+| Agent compromise | Prompt-hack the local assistant and expose protected memory. |
+| Persistence | Create access that survives an application restart. |
+| Slow exfiltration | Recover protected records through small transfers. |
+| Defense evasion | Recover records and alter host evidence. |
+| Concurrent attack | Run four attacker agents against several goals. |
+
+The external scorer reads independent evidence. This evidence includes Linux
+Audit records, database access logs, attacker output, Argus events, reports,
+containment receipts, service status, process state, listener state, and
+persistence files.
+
+The score reports these measures:
+
+- Compromise and exfiltration success.
+- Protected records and bytes exposed.
+- Detection and containment latency.
+- Process attribution.
+- Persistence state.
+- Report accuracy.
+- Evidence preservation.
+- Service downtime.
+- Clean-traffic alerts.
+
+A defender win requires every strict condition. Argus must detect the attack,
+investigate it, contain the attributed process, remove persistence, preserve
+evidence, write an accurate report, keep the services healthy, and avoid an
+alert during clean traffic. A queued alert alone fails.
+
+## Latest VM Result
+
+The latest complete run used the `rce-exfiltration` campaign. GLM found a
+command-injection flaw after 530 seconds of blind discovery. Argus stopped the
+attack before database access or record exposure.
+
+| Measure | Result |
+| --- | --- |
+| Host compromise | Yes. Linux Audit recorded web-account process execution. |
+| Attacker objective | Incomplete. Zero records and zero bytes were exposed. |
+| Campaign start to detection | 530.0 seconds |
+| Detection to containment | 38 milliseconds |
+| Argus investigation | Completed |
+| Correct process attribution | Yes |
+| Containment | User egress blocked and service process terminated |
+| Damage-report accuracy | Pass |
+| Clean-traffic alerts | 0 |
+| Service downtime | 4 seconds |
+| Defender result | Win |
+
+The external scorer passed every strict condition and exited with status `0`.
+The run artifacts are in
+`artifacts/adversarial-vm/20260829T205125Z-9345-rce-exfiltration`.
+
+## Run the Benchmark
+
+Install Lima on the macOS host. Set `OPENAI_API_KEY` and `ZAI_API_KEY` in
+`.env`. Then run one campaign:
 
 ```sh
-npm run eval:red-team:suite
-npm run eval:red-team:hard-suite
-npm run eval:red-team:expert-suite
-npm run test:e2e:linux
+brew install lima
+npm run eval:adversarial:vm -- rce-exfiltration
 ```
+
+Set `KEEP_VM=1` to keep the VM after the score:
+
+```sh
+KEEP_VM=1 npm run eval:adversarial:vm -- persistence
+```
+
+The benchmark saves evidence under `artifacts/adversarial-vm`. Git ignores
+this directory.
+
+## Current Limits
+
+The Linux response path consumes Argus-keyed Audit records. Production setup
+must install suitable Audit rules and grant log access. The connection tool
+currently reports host counts and listeners. Exact socket-to-process mapping
+remains future work. The macOS path still needs Endpoint Security telemetry and
+equivalent native containment tests.

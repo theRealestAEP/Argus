@@ -3,6 +3,8 @@ import { platform } from "node:os";
 import { jsonText, writePrivate } from "./files.js";
 import { recordEvidence } from "./evidence-store.js";
 import { runOperationalCycle } from "./operational-loop.js";
+import { collectUrgentHostAlerts } from "./operational-adapters.js";
+import { watchLinuxAudit } from "./linux-audit.js";
 import { statePaths } from "./paths.js";
 
 export interface DaemonHeartbeat {
@@ -61,10 +63,16 @@ export async function runDaemon(
 	};
 	await tick();
 	const timer = setInterval(() => void tick(), 30_000);
+	const urgentTimer = setInterval(() => collectUrgentHostAlerts(root), 2_000);
+	const auditWatcher = process.platform === "linux"
+		? watchLinuxAudit(() => collectUrgentHostAlerts(root))
+		: null;
 	try {
 		await stopped;
 	} finally {
 		clearInterval(timer);
+		clearInterval(urgentTimer);
+		auditWatcher?.close();
 		writeHeartbeat(root, startedAt);
 		recordEvidence(root, "daemon.stopped", `PID ${process.pid}`);
 	}

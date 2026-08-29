@@ -29,6 +29,8 @@ export type StatePaths = {
 	operatorMessages: string;
 	reports: string;
 	reviewState: string;
+	auditCursor: string;
+	processSnapshot: string;
 	sensorConfig: string;
 	sensorIntegrityState: string;
 	sensorSignature: string;
@@ -66,6 +68,8 @@ export function statePaths(root: string): StatePaths {
 		operatorMessages: join(root, "operator-messages"),
 		reports: join(root, "reports"),
 		reviewState: join(root, "runtime", "review-state.json"),
+		auditCursor: join(root, "runtime", "audit-cursor.json"),
+		processSnapshot: join(root, "runtime", "privileged-processes.json"),
 		sensorConfig: join(root, "sensor-config.json"),
 		sensorIntegrityState: join(root, "runtime", "sensor-integrity.json"),
 		sensorSignature: join(root, "sensor-config.sig"),

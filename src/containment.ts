@@ -69,17 +69,42 @@ function ensureNftables(gateway: ContainmentGateway): void {
 		true,
 	);
 	gateway.runNft(
+		["add", "set", "inet", "argus", "blocked_uids", "{", "type", "uid", ";", "}"],
+		true,
+	);
+	gateway.runNft(
 		[
 			"add", "chain", "inet", "argus", "output", "{", "type", "filter", "hook",
 			"output", "priority", "-10", ";", "policy", "accept", ";", "}",
 		],
 		true,
 	);
+	gateway.runNft(["flush", "chain", "inet", "argus", "output"], false);
+	gateway.runNft(
+		["add", "rule", "inet", "argus", "output", "ct", "direction", "reply", "accept"],
+		true,
+	);
 	gateway.runNft(
 		["add", "rule", "inet", "argus", "output", "ip", "daddr", "@blocked_ipv4", "reject"],
 		true,
 	);
+	gateway.runNft(
+		["add", "rule", "inet", "argus", "output", "meta", "skuid", "@blocked_uids", "reject"],
+		true,
+	);
 	gateway.runNft(["list", "chain", "inet", "argus", "output"], false);
+}
+
+function blockUserEgress(target: string, gateway: ContainmentGateway): string {
+	if (!/^\d+$/u.test(target)) {
+		throw new Error("A user egress block requires one numeric user ID.");
+	}
+	ensureNftables(gateway);
+	gateway.runNft(
+		["add", "element", "inet", "argus", "blocked_uids", "{", target, "}"],
+		false,
+	);
+	return `nft delete element inet argus blocked_uids { ${target} }`;
 }
 
 function blockDestination(
@@ -148,6 +173,8 @@ export function applyContainment(
 	let rollback: string;
 	if (parsed.action === "block-destination") {
 		rollback = blockDestination(parsed.target, gateway);
+	} else if (parsed.action === "block-user-egress") {
+		rollback = blockUserEgress(parsed.target, gateway);
 	} else if (parsed.action === "pause-process") {
 		rollback = pauseProcess(parsed.target, gateway);
 	} else {
@@ -163,6 +190,7 @@ export function applyContainment(
 	writePrivate(
 		join(statePaths(root).containmentReceipts, `${receipt.appliedAt}-${receipt.id}.json`),
 		jsonText(receipt),
+		0o644,
 	);
 	return receipt;
 }

@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 
 import type { ContainmentGateway, ProcessIdentity } from "./containment.js";
 
-function nativeProcessIdentity(pid: number): ProcessIdentity {
+export function nativeProcessIdentity(pid: number): ProcessIdentity {
 	const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
 	const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
 	return {

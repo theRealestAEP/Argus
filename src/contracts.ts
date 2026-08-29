@@ -151,7 +151,12 @@ export const evidenceEventSchema = z.object({
 export type EvidenceEvent = z.infer<typeof evidenceEventSchema>;
 
 export const containmentPlanSchema = z.object({
-	action: z.enum(["block-destination", "pause-process", "terminate-process"]),
+	action: z.enum([
+		"block-destination",
+		"block-user-egress",
+		"pause-process",
+		"terminate-process",
+	]),
 	evidence: z.array(z.string().min(1)).min(1),
 	reason: z.string().min(1),
 	target: z.string().min(1),
@@ -269,6 +274,7 @@ export const alertSchema = z.object({
 		"outbound-connection-burst",
 		"process-start-burst",
 		"scheduled-review",
+		"service-command-shell",
 		"sensor-integrity-failure",
 	]),
 	severity: z.enum(["low", "medium", "high", "critical"]),

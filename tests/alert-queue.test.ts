@@ -1,4 +1,4 @@
-import { mkdtempSync, readdirSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -58,6 +58,9 @@ describe("alert queue", () => {
 			"old report",
 			new Date("2026-01-01T00:00:00.000Z"),
 		);
+		const oldName = readdirSync(statePaths(root).reports)[0] ?? "";
+		mkdirSync(statePaths(root).mailReceipts, { recursive: true });
+		writeFileSync(join(statePaths(root).mailReceipts, `${oldName}.json`), "{}");
 		saveIncidentReport(
 			root,
 			queuedAlert.id,

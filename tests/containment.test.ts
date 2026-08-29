@@ -66,6 +66,42 @@ describe("containment authorization", () => {
 		expect(readdirSync(statePaths(root).containmentReceipts)).toHaveLength(1);
 	});
 
+	test("blocks all egress for one service account", () => {
+		const root = mkdtempSync(join(tmpdir(), "argus-containment-test-"));
+		const commands: string[] = [];
+		const gateway: ContainmentGateway = {
+			pause: () => undefined,
+			processIdentity: () => ({ executable: "/bin/test", pid: 42, startTimeTicks: "10" }),
+			runNft: (args) => commands.push(args.join(" ")),
+			terminate: () => undefined,
+		};
+		const plan = {
+			action: "block-user-egress" as const,
+			evidence: ["audit event"],
+			reason: "active command execution",
+			target: "999",
+		};
+
+		expect(applyContainment(
+			root,
+			policy("autonomous-action"),
+			plan,
+			0,
+			gateway,
+		).rollback).toContain("blocked_uids");
+		expect(commands).toContain(
+			"add rule inet argus output ct direction reply accept",
+		);
+		expect(commands.at(-1)).toContain("blocked_uids { 999 }");
+		expect(() => applyContainment(
+			root,
+			policy("autonomous-action"),
+			{ ...plan, target: "service-user" },
+			0,
+			gateway,
+		)).toThrow("numeric user ID");
+	});
+
 	test("verifies process identity before termination", () => {
 		const root = mkdtempSync(join(tmpdir(), "argus-containment-test-"));
 		let terminatedPid = 0;

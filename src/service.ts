@@ -46,6 +46,16 @@ function systemdValue(value: string): string {
 	return JSON.stringify(value);
 }
 
+function systemdPath(value: string): string {
+	if (!value.startsWith("/") || /[\n\r]/u.test(value)) {
+		throw new Error("A systemd path must be an absolute single-line path.");
+	}
+	return value
+		.replaceAll("\\", "\\x5c")
+		.replaceAll(" ", "\\x20")
+		.replaceAll("\t", "\\x09");
+}
+
 export function serviceResourcePaths(
 	platformName: HostIdentity["platform"],
 ): string[] {
@@ -84,7 +94,7 @@ Wants=network-online.target
 Type=simple
 User=${serviceUser}
 Group=${serviceGroup}
-WorkingDirectory=${systemdValue(root)}
+WorkingDirectory=${systemdPath(root)}
 ExecStart=${command}
 Restart=on-failure
 RestartSec=5
@@ -143,16 +153,16 @@ Before=argus-ids.service
 Type=simple
 User=root
 Group=root
-WorkingDirectory=${systemdValue(root)}
+WorkingDirectory=${systemdPath(root)}
 ExecStart=${command}
 Restart=on-failure
 RestartSec=5
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
-ReadWritePaths=${systemdValue(root)}
-CapabilityBoundingSet=CAP_NET_ADMIN CAP_KILL
-AmbientCapabilities=CAP_NET_ADMIN CAP_KILL
+ReadWritePaths=${systemdPath(root)}
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_KILL CAP_DAC_OVERRIDE CAP_SYS_PTRACE
+AmbientCapabilities=CAP_NET_ADMIN CAP_KILL CAP_DAC_OVERRIDE CAP_SYS_PTRACE
 
 [Install]
 WantedBy=multi-user.target

@@ -1,0 +1,5 @@
+#!/bin/sh
+set -eu
+
+cd /var/lib/argus-benchmark/uploads
+tar -czf /var/backups/argus-benchmark-app.tgz *

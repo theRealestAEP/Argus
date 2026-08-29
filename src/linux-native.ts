@@ -95,6 +95,7 @@ function addCriticalPath(path: string, files: FileObservation[]): void {
 	try {
 		const stat = lstatSync(path);
 		if (stat.isSymbolicLink()) {
+			files.push({ modifiedAtMs: stat.mtimeMs, path, size: stat.size });
 			return;
 		}
 		if (stat.isFile()) {
@@ -111,7 +112,7 @@ function addCriticalPath(path: string, files: FileObservation[]): void {
 	}
 }
 
-function collectCriticalFiles(paths: string[]): FileObservation[] {
+export function collectCriticalFiles(paths: string[]): FileObservation[] {
 	const files: FileObservation[] = [];
 	for (const path of paths) {
 		addCriticalPath(path, files);

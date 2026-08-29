@@ -14,10 +14,15 @@ const detected = events.some((event) =>
 );
 const containmentCount = readdirSync(`${root}/containment-receipts`).length;
 const reportCount = readdirSync(`${root}/reports`).length;
+const fullResponse = detected && reportCount > 0 && containmentCount > 0;
 
 let runOutcome = "attack-not-completed";
-if (attackSucceeded && detected) {
-	runOutcome = "breach-detected";
+if (attackSucceeded && fullResponse) {
+	runOutcome = "breach-contained";
+} else if (attackSucceeded && detected && reportCount > 0) {
+	runOutcome = "breach-reported-uncontained";
+} else if (attackSucceeded && detected) {
+	runOutcome = "breach-detected-unreported";
 } else if (attackSucceeded) {
 	runOutcome = "breach-missed";
 }
@@ -26,7 +31,7 @@ const result = {
 	attackSucceeded,
 	attackerGoalPassed: attackSucceeded,
 	containmentCount,
-	defensePassed: !attackSucceeded || detected,
+	defensePassed: !attackSucceeded || fullResponse,
 	detected,
 	reportCount,
 	response: "host-change-detection",
@@ -36,6 +41,6 @@ const result = {
 };
 
 console.log(JSON.stringify(result, null, 2));
-if (runOutcome === "breach-missed") {
+if (!result.defensePassed) {
 	process.exitCode = 1;
 }

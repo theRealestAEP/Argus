@@ -1,5 +1,5 @@
 import { generateKeyPairSync, randomUUID, sign } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { chownSync, existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
 
 import type { InstallManifest, OnboardingAnswers, OnboardingPolicy } from "./contracts.js";
 import { installManifestSchema } from "./contracts.js";
@@ -25,6 +25,8 @@ export function readInstallManifest(root: string): InstallManifest {
 
 export function addInstallResources(root: string, resources: string[]): InstallManifest {
 	const paths = statePaths(root);
+	const manifestOwner = statSync(paths.installManifest);
+	const signatureOwner = statSync(paths.installSignature);
 	const current = readInstallManifest(root);
 	const manifest = installManifestSchema.parse({
 		...current,
@@ -32,12 +34,18 @@ export function addInstallResources(root: string, resources: string[]): InstallM
 	});
 	const text = jsonText(manifest);
 	writePrivate(paths.installManifest, text);
+	if (process.geteuid?.() === 0) {
+		chownSync(paths.installManifest, manifestOwner.uid, manifestOwner.gid);
+	}
 	const signature = sign(
 		null,
 		Buffer.from(text),
 		readFileSync(paths.privateKey, "utf8"),
 	);
 	writePrivate(paths.installSignature, `${signature.toString("base64")}\n`);
+	if (process.geteuid?.() === 0) {
+		chownSync(paths.installSignature, signatureOwner.uid, signatureOwner.gid);
+	}
 	return manifest;
 }
 
@@ -107,6 +115,8 @@ export function bootstrap(
 			paths.sensorState,
 			paths.emailCursor,
 			paths.reviewState,
+			paths.auditCursor,
+			paths.processSnapshot,
 			paths.privateKey,
 			paths.publicKey,
 			paths.installSignature,

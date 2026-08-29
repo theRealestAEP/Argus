@@ -5,6 +5,8 @@ target=$1
 attacker=$2
 state_root=$3
 output=$4
+environment_file=${5:-}
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 
 mkdir -p "$output"
 if docker inspect "$target" >/dev/null 2>&1; then
@@ -33,3 +35,8 @@ fi
 	printf '%s\n\n' "Empty artifact classes are omitted."
 	find "$output" -type f ! -name contents.txt -print | sort
 } >"$output/contents.txt"
+
+if [ -n "$environment_file" ]; then
+	node --env-file="$environment_file" \
+		"$script_dir/redact-eval-artifacts.mjs" "$output"
+fi

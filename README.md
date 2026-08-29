@@ -133,25 +133,30 @@ Run the interactive Linux onboarding demo:
 npm run demo:onboarding:linux
 ```
 
-Run GLM 5.3 attack suites:
+Run the cooperative telemetry smoke test:
 
 ```sh
 export ZAI_API_KEY=...
-npm run eval:red-team:suite
-npm run eval:red-team:hard-suite
-npm run eval:red-team:expert-suite
+npm run eval:smoke:cooperative
 ```
 
-See the [security evaluation report](SECURITY-EVALUATION.md) for the scenario
-catalog and current results.
+This Docker test checks the runtime event integration. The service tells Argus
+the exact process that performed an action. Use it as an integration test.
 
-The standard suite tests common service attacks. The hard suite tests host
-sensors and Argus integrity. The expert suite tests hidden network exploit
-chains. Each attacker receives only a target URL and goal.
+Run the independent adversarial benchmark on macOS:
 
-Each run saves its score, Argus events, logs, and Pi session under
-`artifacts/security-evals`. Empty artifact classes are omitted. Git ignores
-this directory.
+```sh
+brew install lima
+npm run eval:adversarial:vm -- rce-exfiltration
+```
+
+The benchmark creates a Linux VM. It runs the target services and Argus as
+native host services. GLM receives only the public address and a business
+goal. The scorer uses Linux Audit logs, database access logs, Argus evidence,
+containment receipts, attacker output, and final host state.
+
+See the [security evaluation report](SECURITY-EVALUATION.md) for the campaigns,
+score rules, and current limits. Git ignores all saved evaluation artifacts.
 
 ## Removal
 

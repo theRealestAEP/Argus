@@ -12,7 +12,7 @@ export interface OperationalServices {
 	canInvestigate(): boolean;
 	collectAlerts(root: string): Promise<Alert[]>;
 	deliverReports(root: string): Promise<void>;
-	investigate(alert: Alert): Promise<InvestigationOutput>;
+	investigate(root: string, alert: Alert): Promise<InvestigationOutput>;
 }
 
 async function stage(root: string, name: string, action: () => Promise<void>): Promise<void> {
@@ -43,7 +43,7 @@ async function investigateNext(
 		return;
 	}
 	try {
-		const result = await services.investigate(claimed.alert);
+		const result = await services.investigate(root, claimed.alert);
 		saveIncidentReport(root, claimed.alert.id, result.model, result.report);
 		completeAlert(claimed);
 		recordEvidence(root, "alert.investigated", claimed.alert.id);

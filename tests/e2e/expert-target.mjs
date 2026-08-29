@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { mkdirSync } from "node:fs";
+import { chmodSync, chownSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -22,9 +22,13 @@ if (!services.has(service)) {
 }
 
 mkdirSync(runtimeDirectory, { recursive: true });
+chownSync(runtimeDirectory, 65_534, 65_534);
+chmodSync(runtimeDirectory, 0o700);
 spawn(process.execPath, [join(directory, "services", `${service}.mjs`)], {
-	env: process.env,
+	env: { PATH: process.env.PATH ?? "" },
+	gid: 65_534,
 	stdio: "inherit",
+	uid: 65_534,
 });
 
 let ready = false;

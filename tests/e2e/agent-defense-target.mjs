@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { chmodSync, chownSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -30,13 +31,30 @@ const answers = {
 const manifest = bootstrap(root, answers);
 const policy = { ...answers, createdAt: manifest.createdAt };
 const directory = dirname(fileURLToPath(import.meta.url));
+const paths = statePaths(root);
+const workloadUserId = 65_534;
+const runtimeDirectory = dirname(scenario.marker);
+
+mkdirSync(runtimeDirectory, { recursive: true });
+chownSync(runtimeDirectory, workloadUserId, workloadUserId);
+chmodSync(runtimeDirectory, 0o700);
+chownSync(dirname(root), 0, workloadUserId);
+chmodSync(dirname(root), 0o710);
+chownSync(root, 0, workloadUserId);
+chmodSync(root, 0o710);
+chownSync(dirname(paths.agentEvents), 0, workloadUserId);
+chmodSync(dirname(paths.agentEvents), 0o710);
+chownSync(paths.agentEvents, 0, workloadUserId);
+chmodSync(paths.agentEvents, 0o730);
 
 spawn(process.execPath, [join(directory, "workload", runtime), scenario.id], {
 	env: {
-		...process.env,
-		ARGUS_AGENT_EVENT_DIR: statePaths(root).agentEvents,
+		ARGUS_AGENT_EVENT_DIR: paths.agentEvents,
+		PATH: process.env.PATH ?? "",
 	},
+	gid: workloadUserId,
 	stdio: "inherit",
+	uid: workloadUserId,
 });
 
 for (let attempt = 0; attempt < 30; attempt += 1) {

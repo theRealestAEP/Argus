@@ -48,6 +48,7 @@ describe("boot service", () => {
 			'"--env-file-if-exists=/etc/argus/env file"',
 		);
 		expect(plan.content).toContain('"--state-dir=/var/lib/argus state"');
+		expect(plan.content).toContain("WorkingDirectory=/var/lib/argus\\x20state");
 		expect(serviceResourcePaths("linux")).toEqual([
 			LINUX_SERVICE_PATH,
 			LINUX_SERVICE_LINK,
@@ -59,8 +60,10 @@ describe("boot service", () => {
 	test("builds a root Linux containment broker", () => {
 		const plan = buildBrokerServicePlan("/var/lib/argus", "/opt/argus", "/usr/bin/node");
 		expect(plan.path).toBe(LINUX_BROKER_SERVICE_PATH);
-		expect(plan.content).toContain("CapabilityBoundingSet=CAP_NET_ADMIN CAP_KILL");
-		expect(plan.content).toContain("ReadWritePaths=\"/var/lib/argus\"");
+		expect(plan.content).toContain(
+			"CapabilityBoundingSet=CAP_NET_ADMIN CAP_KILL CAP_DAC_OVERRIDE",
+		);
+		expect(plan.content).toContain("ReadWritePaths=/var/lib/argus");
 		expect(plan.content).toContain("broker");
 	});
 

@@ -14,6 +14,8 @@ import {
 	buildSensorCommissioningRequest,
 	guidedOnboardingTurn,
 	guidedOnboardingWithGateway,
+	investigateDirect,
+	investigateDirectWithGateway,
 	investigateWithGateway,
 	investigateWithSubagent,
 	isUnavailableModelError,
@@ -313,8 +315,98 @@ describe("model runtime", () => {
 		expect(request.input).toContain("host alert");
 		expect(request.input).toContain("evidence review");
 		expect(request.instructions).toContain("untrusted evidence");
+		expect(request.text?.format?.type).toBe("json_schema");
 		expect(request.reasoning).toEqual({ context: "all_turns", effort: "high" });
 		expect(request.store).toBe(false);
+	});
+
+	test("returns a structured investigation decision", async () => {
+		const decision = {
+			confidence: 95,
+			evidenceRequests: ["connections"],
+			recommendedAction: "block-user-egress",
+			report: "Confirmed hostile service command.",
+			verdict: "confirmed-hostile",
+		};
+		const result = await investigateWithGateway(
+			gatewayFor([
+				response("subagent-id", "analysis"),
+				response("main-id", JSON.stringify(decision)),
+			]),
+			"alert",
+			"primary",
+			"fallback",
+		);
+
+		expect(result.decision).toEqual(decision);
+		expect(result.report).toBe(decision.report);
+	});
+
+	test("runs one direct investigator pass for verified host evidence", async () => {
+		const decision = {
+			confidence: 99,
+			evidenceRequests: [],
+			recommendedAction: "terminate-process",
+			report: "Argus contained the confirmed command execution.",
+			verdict: "confirmed-hostile",
+		} as const;
+		let compacted = false;
+		const gateway: ModelGateway = {
+			compact() {
+				compacted = true;
+				return Promise.resolve({ id: "compact", usage });
+			},
+			create(request) {
+				expect(request.reasoning).toEqual({ context: "all_turns", effort: "medium" });
+				return Promise.resolve(response("main-id", JSON.stringify(decision)));
+			},
+		};
+
+		await expect(investigateDirectWithGateway(
+			gateway,
+			"verified evidence",
+			"primary",
+			"fallback",
+		)).resolves.toMatchObject({ decision, mainResponseId: "main-id" });
+		expect(compacted).toBe(false);
+	});
+
+	test("handles direct investigator failures and model fallback", async () => {
+		const decision = JSON.stringify({
+			confidence: 90,
+			evidenceRequests: [],
+			recommendedAction: "preserve",
+			report: "Evidence preserved.",
+			verdict: "suspicious",
+		});
+		let calls = 0;
+		const fallbackGateway: ModelGateway = {
+			compact: () => Promise.resolve({ id: "compact", usage }),
+			create: () => {
+				calls += 1;
+				return calls === 1
+					? Promise.reject(new APIError(404, {}, "missing", new Headers()))
+					: Promise.resolve(response("fallback", decision));
+			},
+		};
+		await expect(investigateDirectWithGateway(
+			fallbackGateway,
+			"evidence",
+			"primary",
+			"fallback",
+		)).resolves.toMatchObject({ fallbackUsed: true, requestedModel: "primary" });
+		await expect(investigateDirectWithGateway(
+			gatewayFor([response("empty", "")]),
+			"evidence",
+			"same",
+			"same",
+		)).rejects.toThrow("main investigator returned an empty response");
+		await expect(investigateDirectWithGateway(
+			{ ...fallbackGateway, create: () => Promise.reject(7) },
+			"evidence",
+			"primary",
+			"fallback",
+		)).rejects.toThrow("model gateway returned an invalid error");
 	});
 
 	test("compacts replayed output with the stable cache policy", () => {
@@ -500,6 +592,9 @@ describe("model runtime", () => {
 
 	test("requires an API key for a live evaluation", async () => {
 		await expect(investigateWithSubagent("alert", "")).rejects.toThrow(
+			"OPENAI_API_KEY is required",
+		);
+		await expect(investigateDirect("alert", "")).rejects.toThrow(
 			"OPENAI_API_KEY is required",
 		);
 	});

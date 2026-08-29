@@ -18,6 +18,7 @@ import { containmentRequestSchema } from "./contracts.js";
 import { jsonText, writePrivate } from "./files.js";
 import { readPolicy } from "./onboarding.js";
 import { statePaths } from "./paths.js";
+import { refreshPrivilegedProcessSnapshot } from "./privileged-inspection.js";
 
 export function requestAutomaticContainment(
 	root: string,
@@ -100,14 +101,17 @@ export async function runContainmentBroker(
 	root: string,
 	wait: () => Promise<void>,
 ): Promise<void> {
+	refreshPrivilegedProcessSnapshot(root);
 	processBrokerRequests(root, process.geteuid?.() ?? -1);
-	const timer = setInterval(
+	const requestTimer = setInterval(
 		() => processBrokerRequests(root, process.geteuid?.() ?? -1),
-		2_000,
+		100,
 	);
+	const snapshotTimer = setInterval(() => refreshPrivilegedProcessSnapshot(root), 2_000);
 	try {
 		await wait();
 	} finally {
-		clearInterval(timer);
+		clearInterval(requestTimer);
+		clearInterval(snapshotTimer);
 	}
 }

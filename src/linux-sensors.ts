@@ -15,6 +15,7 @@ import { linuxSnapshotSchema, sensorConfigSchema } from "./contracts.js";
 import { jsonText, writePrivate } from "./files.js";
 import { statePaths } from "./paths.js";
 import { collectLinuxSnapshot } from "./linux-native.js";
+import { initializeLinuxAuditCursor } from "./linux-audit.js";
 
 export { collectLinuxSnapshot } from "./linux-native.js";
 
@@ -70,6 +71,7 @@ export function commissionLinuxSensors(
 	const text = jsonText(config);
 	writePrivate(paths.sensorConfig, text);
 	writePrivate(paths.sensorState, jsonText(config.baseline));
+	initializeLinuxAuditCursor(root);
 	const signature = sign(null, Buffer.from(text), readFileSync(paths.privateKey, "utf8"));
 	writePrivate(paths.sensorSignature, `${signature.toString("base64")}\n`);
 	return config;
@@ -205,7 +207,7 @@ function connectionAlerts(
 	const previousIncrease =
 		previous.establishedConnectionCount - config.baseline.establishedConnectionCount;
 	const crossed = currentIncrease >= config.thresholds.establishedConnectionBurst &&
-		previousIncrease < config.thresholds.establishedConnectionBurst;
+		previousIncrease >= config.thresholds.establishedConnectionBurst;
 	return config.selection.networkConnections && crossed
 		? [alert(
 			"outbound-connection-burst",
@@ -262,8 +264,12 @@ export function runSensorCanary(
 			})),
 		],
 	};
+	const previous = {
+		...baseline,
+		establishedConnectionCount: current.establishedConnectionCount,
+	};
 	const observed = new Set(
-		detectLinuxAlerts(config, baseline, current, now).map((item) => item.kind),
+		detectLinuxAlerts(config, previous, current, now).map((item) => item.kind),
 	);
 	const checks = canaryKinds
 		.filter(([selection]) => config.selection[selection])

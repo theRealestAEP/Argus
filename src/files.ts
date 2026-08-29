@@ -6,9 +6,9 @@ export function jsonText<Value extends object>(value: Value): string {
 	return `${JSON.stringify(value, null, 2)}\n`;
 }
 
-export function writePrivate(path: string, content: string): void {
+export function writePrivate(path: string, content: string, mode = 0o600): void {
 	mkdirSync(dirname(path), { mode: 0o700, recursive: true });
 	const temporaryPath = `${path}.${randomUUID()}.tmp`;
-	writeFileSync(temporaryPath, content, { encoding: "utf8", mode: 0o600 });
+	writeFileSync(temporaryPath, content, { encoding: "utf8", mode });
 	renameSync(temporaryPath, path);
 }

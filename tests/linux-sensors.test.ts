@@ -93,6 +93,7 @@ describe("Linux sensors", () => {
 	test("detects each enabled alert class", () => {
 		const baseline = snapshot();
 		const config = createSensorConfig(baseline, ["/etc/example"], selection);
+		const previous = { ...baseline, establishedConnectionCount: 6 };
 		const current: LinuxSnapshot = {
 			...baseline,
 			authFailureCount: 3,
@@ -113,13 +114,22 @@ describe("Linux sensors", () => {
 			],
 		};
 
-		expect(detectLinuxAlerts(config, baseline, current).map((item) => item.kind)).toEqual([
+		expect(detectLinuxAlerts(config, previous, current).map((item) => item.kind)).toEqual([
 			"process-start-burst",
 			"new-listener",
 			"critical-file-change",
 			"authentication-burst",
 			"outbound-connection-burst",
 		]);
+	});
+
+	test("ignores a one-interval connection spike", () => {
+		const baseline = snapshot();
+		const config = createSensorConfig(baseline, [], selection);
+		const current = { ...baseline, establishedConnectionCount: 6 };
+
+		expect(detectLinuxAlerts(config, baseline, current).map((item) => item.kind))
+			.not.toContain("outbound-connection-burst");
 	});
 
 	test("detects removed files and suppresses disabled sensors", () => {
