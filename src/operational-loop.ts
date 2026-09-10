@@ -44,7 +44,7 @@ async function investigateNext(
 	}
 	try {
 		const result = await services.investigate(root, claimed.alert);
-		saveIncidentReport(root, claimed.alert.id, result.model, result.report);
+		saveIncidentReport(root, claimed.alert, result.model, result.report);
 		completeAlert(claimed);
 		recordEvidence(root, "alert.investigated", claimed.alert.id);
 	} catch (error) {

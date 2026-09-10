@@ -102,6 +102,166 @@ describe("containment authorization", () => {
 		)).toThrow("numeric user ID");
 	});
 
+	test("quarantines one allowlisted persistence file", () => {
+		const root = mkdtempSync(join(tmpdir(), "argus-containment-test-"));
+		let moved = "";
+		const gateway: ContainmentGateway = {
+			pause: () => undefined,
+			processIdentity: () => ({ executable: "/bin/test", pid: 42, startTimeTicks: "10" }),
+			quarantine: (source, destination) => {
+				moved = `${source}:${destination}`;
+			},
+			runNft: () => undefined,
+			terminate: () => undefined,
+		};
+		const receipt = applyContainment(
+			root,
+			policy("autonomous-action"),
+			{
+				action: "quarantine-persistence",
+				evidence: ["audit event"],
+				reason: "service created a cron file",
+				target: "/etc/cron.d/quiet-update",
+			},
+			0,
+			gateway,
+		);
+
+		expect(moved).toContain("/etc/cron.d/quiet-update:");
+		expect(moved).toContain("/quarantine/");
+		expect(receipt.rollback).toContain("mv --");
+		expect(() => applyContainment(
+			root,
+			policy("autonomous-action"),
+			{
+				action: "quarantine-persistence",
+				evidence: ["audit event"],
+				reason: "invalid target",
+				target: "/etc/passwd",
+			},
+			0,
+			gateway,
+		)).toThrow("outside the broker allowlist");
+		expect(() => applyContainment(
+			root,
+			policy("autonomous-action"),
+			{
+				action: "quarantine-persistence",
+				evidence: ["audit event"],
+				reason: "missing backend",
+				target: "/etc/cron.d/quiet-update",
+			},
+			0,
+			{
+				pause: gateway.pause,
+				processIdentity: gateway.processIdentity,
+				runNft: gateway.runNft,
+				terminate: gateway.terminate,
+			},
+		)).toThrow("cannot quarantine");
+	});
+
+	test("removes new set-user-ID and set-group-ID bits", () => {
+		const root = mkdtempSync(join(tmpdir(), "argus-containment-test-"));
+		let appliedMode = 0;
+		const gateway: ContainmentGateway = {
+			fileMode: () => 0o6755,
+			pause: () => undefined,
+			processIdentity: () => ({ executable: "/bin/test", pid: 42, startTimeTicks: "10" }),
+			runNft: () => undefined,
+			setFileMode: (_path, mode) => {
+				appliedMode = mode;
+			},
+			terminate: () => undefined,
+		};
+		const receipt = applyContainment(
+			root,
+			policy("autonomous-action"),
+			{
+				action: "strip-file-privileges",
+				evidence: ["audit chmod event"],
+				reason: "service added file privileges",
+				target: "/usr/lib/syscore",
+			},
+			0,
+			gateway,
+		);
+
+		expect(appliedMode).toBe(0o755);
+		expect(receipt.rollback).toContain("chmod 6755");
+		expect(() => applyContainment(
+			root,
+			policy("autonomous-action"),
+			{
+				action: "strip-file-privileges",
+				evidence: ["audit chmod event"],
+				reason: "invalid path",
+				target: "relative/path",
+			},
+			0,
+			gateway,
+		)).toThrow("absolute path");
+	});
+
+	test("starts only a signed expected service", () => {
+		const root = mkdtempSync(join(tmpdir(), "argus-containment-test-"));
+		let started = "";
+		const servicePolicy = { ...policy("autonomous-action"), expectedServices: ["web.service"] };
+		const gateway: ContainmentGateway = {
+			pause: () => undefined,
+			processIdentity: () => ({ executable: "/bin/test", pid: 42, startTimeTicks: "10" }),
+			runNft: () => undefined,
+			startService: (unit) => {
+				started = unit;
+			},
+			terminate: () => undefined,
+		};
+		const plan = {
+			action: "start-service" as const,
+			evidence: ["service stopped"],
+			reason: "restore expected service",
+			target: "web.service",
+		};
+
+		expect(applyContainment(root, servicePolicy, plan, 0, gateway).rollback)
+			.toContain("systemctl stop");
+		expect(started).toBe("web.service");
+		expect(() => applyContainment(
+			root,
+			servicePolicy,
+			{ ...plan, target: "other.service" },
+			0,
+			gateway,
+		)).toThrow("expected-service policy");
+	});
+
+	test("starts only a signed expected launchd service", () => {
+		const root = mkdtempSync(join(tmpdir(), "argus-containment-test-"));
+		let started = "";
+		const servicePolicy = {
+			...policy("autonomous-action"),
+			expectedServices: ["system/com.example.worker"],
+		};
+		const gateway: ContainmentGateway = {
+			pause: () => undefined,
+			processIdentity: () => ({ executable: "/bin/test", pid: 42, startTimeTicks: "10" }),
+			runNft: () => undefined,
+			startService: (unit) => {
+				started = unit;
+				return `launchctl kill SIGTERM ${unit}`;
+			},
+			terminate: () => undefined,
+		};
+
+		expect(applyContainment(root, servicePolicy, {
+			action: "start-service",
+			evidence: ["launchd state"],
+			reason: "restore expected service",
+			target: "system/com.example.worker",
+		}, 0, gateway).rollback).toContain("launchctl kill SIGTERM");
+		expect(started).toBe("system/com.example.worker");
+	});
+
 	test("verifies process identity before termination", () => {
 		const root = mkdtempSync(join(tmpdir(), "argus-containment-test-"));
 		let terminatedPid = 0;
@@ -159,6 +319,13 @@ describe("containment authorization", () => {
 			0,
 			gateway,
 		)).toThrow("pid=N");
+		expect(() => applyContainment(
+			root,
+			policy("autonomous-action"),
+			{ ...processPlan, action: "pause-process", target: "pid=1,start=1,path=/sbin/init" },
+			0,
+			gateway,
+		)).toThrow("init process");
 		expect(() => applyContainment(
 			root,
 			policy("approval-required"),

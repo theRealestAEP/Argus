@@ -21,6 +21,7 @@ import {
 import { detectHost } from "./host.js";
 import { applyContainment } from "./containment.js";
 import { runContainmentBroker } from "./containment-broker.js";
+import { readMacosSensorStatus, runMacosSensor } from "./macos-eslogger.js";
 import { containmentPlanSchema } from "./contracts.js";
 import { uninstallPlan } from "./lifecycle.js";
 import { buildMemoryPack, verifyMemoryPack } from "./memory-pack.js";
@@ -41,8 +42,10 @@ import {
 	buildServicePlan,
 	buildBrokerServicePlan,
 	buildMacosBrokerServicePlan,
+	buildMacosSensorServicePlan,
 	installService,
 	uninstallService,
+	type ServicePlan,
 } from "./service.js";
 
 const command = process.argv.at(2) ?? "help";
@@ -74,15 +77,21 @@ const parsedArguments = parseArgs({
 	},
 	strict: true,
 });
-const root =
-	parsedArguments.values["state-dir"] ??
-	process.env.IDS_AGENT_STATE_DIR ??
-	join(process.cwd(), ".ids-agent");
 const applicationDirectory = join(dirname(fileURLToPath(import.meta.url)), "..");
-const environmentFile = parsedArguments.values["env-file"] ?? join(process.cwd(), ".env");
+const installedEnvironmentFile = process.platform === "darwin"
+	? "/Library/Application Support/Argus/config/env"
+	: "/etc/argus-ids/env";
+const environmentFile = parsedArguments.values["env-file"] ??
+	(existsSync(installedEnvironmentFile) ? installedEnvironmentFile : join(process.cwd(), ".env"));
 if (existsSync(environmentFile)) {
 	process.loadEnvFile(environmentFile);
 }
+const installedStateDirectory = process.platform === "darwin"
+	? "/Library/Application Support/Argus/state"
+	: "/var/lib/argus-ids";
+const root = parsedArguments.values["state-dir"] ??
+	process.env.IDS_AGENT_STATE_DIR ??
+	(existsSync(installedStateDirectory) ? installedStateDirectory : join(process.cwd(), ".ids-agent"));
 
 function showHelp(): void {
 	console.log(`Usage: ids-agent <command>
@@ -92,7 +101,8 @@ Commands:
   re-onboard     Update the local operating policy
   commission     Let the agent configure Linux sensors
   contain        Apply an administrator-approved containment plan
-  broker         Run the privileged Linux containment broker
+  broker         Run the privileged containment broker
+  macos-sensor   Run the privileged macOS event sensor
   register-install-resources Record installer-owned resources
   daemon         Run the background agent process
   install-service Install and start the boot service
@@ -191,7 +201,7 @@ function showCapabilities(report: CapabilityReport): void {
 }
 
 function refreshCapabilities(showReport = true): CapabilityReport {
-	const report = inspectCapabilities();
+	const report = inspectCapabilities(new Date(), root);
 	saveCapabilityReport(root, report);
 	if (showReport) {
 		showCapabilities(report);
@@ -333,6 +343,16 @@ async function commission(): Promise<void> {
 	await commissionLinux(readPolicy(root), manifest.createdAt);
 }
 
+function showMacosSensorStatus(manifest: ReturnType<typeof readInstallManifest>, paths: ReturnType<typeof statePaths>): void {
+	if (manifest.host.platform !== "darwin" || !existsSync(paths.macosSensorStatus)) {
+		return;
+	}
+	const sensor = readMacosSensorStatus(root);
+	console.log(`macOS sensor: ${sensor.connected ? "connected" : "stopped"}`);
+	console.log(`macOS events received: ${sensor.eventCount}`);
+	console.log(`Last macOS event: ${sensor.lastEventAt ?? "none"}`);
+}
+
 function status(): void {
 	requireSetup();
 	const manifest = readInstallManifest(root);
@@ -364,6 +384,7 @@ function status(): void {
 			.map(([name]) => name);
 		console.log(`Sensors: ${selected.join(", ")} (every ${sensors.pollIntervalSeconds} seconds)`);
 	}
+	showMacosSensorStatus(manifest, paths);
 	console.log(`Pending alerts: ${readdirSync(paths.alerts).length}`);
 	console.log(`Active investigations: ${readdirSync(paths.alertWorking).length}`);
 	console.log(`Local reports: ${readdirSync(paths.reports).length}`);
@@ -427,22 +448,35 @@ function servicePlan() {
 	);
 }
 
+function installMacosServices(plan: ServicePlan, effectiveUserId: number): void {
+	const sensorPlan = buildMacosSensorServicePlan(
+		root,
+		applicationDirectory,
+		process.execPath,
+	);
+	uninstallService(sensorPlan, effectiveUserId);
+	installService(
+		buildMacosBrokerServicePlan(root, applicationDirectory, process.execPath),
+		effectiveUserId,
+	);
+	installService(plan, effectiveUserId);
+	installService(sensorPlan, effectiveUserId);
+}
+
 function installBootService(): void {
 	requireSetup();
 	const plan = servicePlan();
 	const manifest = readInstallManifest(root);
+	const effectiveUserId = process.geteuid?.() ?? -1;
 	if (manifest.host.platform === "linux") {
 		installService(
 			buildBrokerServicePlan(root, applicationDirectory, process.execPath),
-			process.geteuid?.() ?? -1,
+			effectiveUserId,
 		);
+		installService(plan, effectiveUserId);
 	} else {
-		installService(
-			buildMacosBrokerServicePlan(root, applicationDirectory, process.execPath),
-			process.geteuid?.() ?? -1,
-		);
+		installMacosServices(plan, effectiveUserId);
 	}
-	installService(plan, process.geteuid?.() ?? -1);
 	console.log(`Installed and started ${plan.label}.`);
 }
 
@@ -459,6 +493,10 @@ function uninstallBootService(): void {
 	} else {
 		uninstallService(
 			buildMacosBrokerServicePlan(root, applicationDirectory, process.execPath),
+			process.geteuid?.() ?? -1,
+		);
+		uninstallService(
+			buildMacosSensorServicePlan(root, applicationDirectory, process.execPath),
 			process.geteuid?.() ?? -1,
 		);
 	}
@@ -525,12 +563,33 @@ function registerInstallResources(): void {
 	console.log(`Recorded ${resources.length} installer resources.`);
 }
 
-async function runServiceCommand(): Promise<boolean> {
+async function runRuntimeCommand(): Promise<boolean> {
 	switch (command) {
 		case "daemon":
 			requireSetup();
 			await runDaemon(root);
 			return true;
+		case "broker":
+			requireSetup();
+			await runContainmentBroker(root, waitForStop);
+			return true;
+		case "macos-sensor":
+			requireSetup();
+			if (process.platform !== "darwin" || (process.geteuid?.() ?? -1) !== 0) {
+				throw new Error("The macOS sensor must run as root on macOS.");
+			}
+			await runMacosSensor(root, waitForStop);
+			return true;
+		default:
+			return false;
+	}
+}
+
+async function runServiceCommand(): Promise<boolean> {
+	if (await runRuntimeCommand()) {
+		return true;
+	}
+	switch (command) {
 		case "install-service":
 			installBootService();
 			return true;
@@ -542,10 +601,6 @@ async function runServiceCommand(): Promise<boolean> {
 			return true;
 		case "contain":
 			contain();
-			return true;
-		case "broker":
-			requireSetup();
-			await runContainmentBroker(root, waitForStop);
 			return true;
 		case "register-install-resources":
 			registerInstallResources();

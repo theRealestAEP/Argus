@@ -130,10 +130,18 @@ cat >/etc/audit/rules.d/argus-benchmark.rules <<EOF
 -w /opt/argus-benchmark -p wa -k argus_benchmark_app
 -w /var/lib/argus-benchmark -p rwa -k argus_benchmark_data
 -w /var/log/argus-benchmark -p wa -k argus_benchmark_logs
+-w /etc/argus-benchmark/web.json -p r -k argus_benchmark_credential
 -w /etc/cron.d -p wa -k argus_benchmark_persistence
--w /etc/systemd/system -p wa -k argus_benchmark_services
+-w /etc/systemd/system -p wa -k argus_benchmark_persistence
+-w /etc/audit -p wa -k argus_benchmark_kernel
 -a always,exit -F arch=b64 -S execve -F euid=$app_uid -k argus_benchmark_exec
+-a always,exit -F arch=b64 -S init_module,finit_module,delete_module -k argus_benchmark_kernel
+-a always,exit -F arch=b64 -S fchmodat -F a2&06000 -k argus_benchmark_persistence
 EOF
+if [ "$machine_arch" = "x86_64" ]; then
+	printf '%s\n' '-a always,exit -F arch=b64 -S chmod,fchmod -F a1&06000 -k argus_benchmark_persistence' \
+		>>/etc/audit/rules.d/argus-benchmark.rules
+fi
 augenrules --load
 systemctl enable --now auditd cron nftables
 nft add table inet argus_benchmark_isolation
@@ -159,7 +167,7 @@ runuser -u argus-ids -- ids-agent setup \
 	--admin-contact=local-only \
 	--maintenance-window='Sunday 02:00' \
 	--critical-paths='/opt/argus-benchmark,/var/lib/argus-benchmark,/etc/cron.d,/etc/systemd/system,/home/benchmark-app' \
-	--expected-services="web:$public_port,database:$database_port,local-agent:$agent_port" \
+	--expected-services='argus-benchmark-web.service,argus-benchmark-database.service,argus-benchmark-agent.service' \
 	--approved-agent-runtimes='assistant.mjs' \
 	--response-mode=autonomous-action \
 	--automatic-process-termination \
@@ -186,3 +194,7 @@ systemctl is-active --quiet argus-ids.service
 systemctl is-active --quiet argus-ids-broker.service
 
 printf '%s\n' "Argus adversarial VM is ready on guest port $public_port."
+
+if [ "$bundle_dir" = "/tmp/argus-benchmark" ]; then
+	rm -rf /tmp/argus-benchmark
+fi

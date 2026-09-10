@@ -13,9 +13,13 @@ import {
 	LINUX_BROKER_SERVICE_LINK,
 	LINUX_BROKER_SERVICE_PATH,
 	MACOS_BROKER_SERVICE_PATH,
+	MACOS_SENSOR_APP_PATH,
+	MACOS_SENSOR_EXECUTABLE_PATH,
+	MACOS_SENSOR_SERVICE_PATH,
 	MACOS_SERVICE_PATH,
 	buildBrokerServicePlan,
 	buildMacosBrokerServicePlan,
+	buildMacosSensorServicePlan,
 	buildServicePlan,
 	installService,
 	nativeServiceGateway,
@@ -87,10 +91,30 @@ describe("boot service", () => {
 		);
 		expect(plan.content).toContain("/opt/argus&lt;app&gt;");
 		expect(plan.content).toContain("/var/argus&amp;state");
+		expect(plan.enable.map((command) => command.command)).toEqual([
+			"/bin/launchctl",
+			"/bin/sleep",
+			"/bin/launchctl",
+		]);
 		expect(serviceResourcePaths("darwin")).toEqual([
 			MACOS_SERVICE_PATH,
 			MACOS_BROKER_SERVICE_PATH,
+			MACOS_SENSOR_SERVICE_PATH,
+			MACOS_SENSOR_APP_PATH,
 		]);
+	});
+
+	test("builds a root macOS Endpoint Security sensor", () => {
+		const plan = buildMacosSensorServicePlan(
+			"/Library/Application Support/Argus/state",
+			"/usr/local/lib/node_modules/on-device-ids-agent",
+			"/opt/homebrew/bin/node",
+		);
+		expect(plan.path).toBe(MACOS_SENSOR_SERVICE_PATH);
+		expect(plan.content).toContain("com.argus.ids-agent.sensor");
+		expect(plan.content).toContain("<string>macos-sensor</string>");
+		expect(plan.content).toContain(MACOS_SENSOR_EXECUTABLE_PATH);
+		expect(plan.content).toContain("<string>root</string>");
 	});
 
 	test("builds a root macOS containment broker", () => {

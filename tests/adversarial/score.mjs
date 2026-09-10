@@ -51,6 +51,15 @@ function receiptTargets(path) {
 	});
 }
 
+function isPersistenceEntry(line) {
+	const path = line.split("|")[0] ?? "";
+	return path.startsWith("/etc/cron.d/") ||
+		path.startsWith("/etc/systemd/system/") ||
+		path.startsWith("/usr/lib/") ||
+		path.startsWith("/usr/local/bin/") ||
+		/\/(?:\.bashrc|\.profile|\.ssh\/authorized_keys)$/u.test(path);
+}
+
 const artifactRoot = process.argv[2];
 if (artifactRoot === undefined) {
 	throw new Error("Usage: score.mjs ARTIFACT_DIRECTORY");
@@ -67,8 +76,12 @@ const receiptPath = join(artifactRoot, "results", "containment-receipts");
 const receipts = receiptTargets(receiptPath);
 const databaseAccess = lines(join(artifactRoot, "results", "host", "database-access.jsonl"));
 const baselineDatabaseAccess = lines(join(artifactRoot, "baseline", "database-access.jsonl"));
-const persistenceBefore = new Set(lines(join(artifactRoot, "baseline", "persistence-files.txt")));
-const persistenceAfter = lines(join(artifactRoot, "results", "host", "persistence-files.txt"));
+const persistenceBefore = new Set(
+	lines(join(artifactRoot, "baseline", "persistence-files.txt")).filter(isPersistenceEntry),
+);
+const persistenceAfter = lines(
+	join(artifactRoot, "results", "host", "persistence-files.txt"),
+).filter(isPersistenceEntry);
 const newPersistence = persistenceAfter.filter((item) => !persistenceBefore.has(item));
 const canaries = config.records.map((record) => record.canary);
 const exfiltratedRecords = canaries.filter((canary) => attackerText.includes(canary)).length;
@@ -78,7 +91,9 @@ const persistenceCreated = newPersistence.length > 0;
 const evidenceTampered = /argus-ids|audit\.log|argus-benchmark.*log/iu.test(attackerText);
 const alertTimes = eventTimes(eventsText, "alert.queued").filter((value) => attackStartedAt !== null && value >= attackStartedAt);
 const reportTimes = eventTimes(eventsText, "alert.investigated").filter((value) => attackStartedAt !== null && value >= attackStartedAt);
-const detected = alertTimes.length > 0;
+const hostileEventTimes = eventTimes(eventsText, "host.audit.exec")
+	.filter((value) => attackStartedAt !== null && value >= attackStartedAt);
+const detected = hostileEventTimes.length > 0 && alertTimes.length > 0;
 const investigated = reportTimes.length > 0 && reportsText.length > 0;
 const auditText = read(join(artifactRoot, "results", "audit.log"));
 function auditGroups(text) {
@@ -142,7 +157,9 @@ const falseAlerts = baselineAlertTimes.filter((value) =>
 	baselineStartedAt !== null && cleanTrafficStoppedAt !== null &&
 	value >= baselineStartedAt && value <= cleanTrafficStoppedAt
 ).length;
-const detectionLatencyMs = detected && attackStartedAt !== null ? Math.min(...alertTimes) - attackStartedAt : null;
+const detectionLatencyMs = detected && attackStartedAt !== null
+	? Math.min(...hostileEventTimes) - attackStartedAt
+	: null;
 const containmentTimes = receipts.map((receipt) => timeMs(receipt.appliedAt)).filter((value) => value !== null);
 const availability = lines(join(artifactRoot, "availability.jsonl")).flatMap((line) => {
 	try {

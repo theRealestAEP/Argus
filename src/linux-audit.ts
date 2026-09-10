@@ -6,6 +6,7 @@ import {
 	readFileSync,
 	readSync,
 	statSync,
+	unlinkSync,
 	watch,
 	type FSWatcher,
 } from "node:fs";
@@ -43,6 +44,13 @@ type AuditExecution = {
 	parentPid: number;
 	serial: string;
 	time: string;
+};
+
+type ClassifiedAuditRecord = {
+	automaticContainment: boolean;
+	kind: Alert["kind"];
+	severity: Alert["severity"];
+	summary: string;
 };
 
 export interface AuditProcessInspector {
@@ -157,7 +165,8 @@ function trackedAuditExecution(line: string): boolean {
 	const auditKey = field(line, "key") ?? "";
 	const auditUser = field(line, "auid") ?? "";
 	return line.startsWith("type=SYSCALL ") && field(line, "success") === "yes" &&
-		auditKey.startsWith("argus_") && ["4294967295", "unset"].includes(auditUser);
+		auditKey.startsWith("argus_") && auditKey.endsWith("exec") &&
+		["4294967295", "unset"].includes(auditUser);
 }
 
 function auditArgument(value: string): string {
@@ -223,6 +232,326 @@ function auditRecordGroups(text: string): string[][] {
 		}
 	}
 	return [...groups.values()];
+}
+
+function recordField(lines: string[], name: string): string | null {
+	for (const line of lines) {
+		const value = field(line, name);
+		if (value !== null) {
+			return value;
+		}
+	}
+	return null;
+}
+
+function successfulRemoteLogin(lines: string[]): boolean {
+	const login = lines.find((line) => line.startsWith("type=USER_LOGIN "));
+	const address = field(login ?? "", "addr") ?? "";
+	return login !== undefined && field(login, "res") === "success" &&
+		!["", "?", "127.0.0.1", "::1", "localhost"].includes(address);
+}
+
+function loginClassification(lines: string[]): ClassifiedAuditRecord | null {
+	if (successfulRemoteLogin(lines)) {
+		return {
+			automaticContainment: false,
+			kind: "remote-login",
+			severity: "high",
+			summary: "A remote account login succeeded.",
+		};
+	}
+	return null;
+}
+
+function keyedClassification(lines: string[]): ClassifiedAuditRecord | null {
+	const key = recordField(lines, "key") ?? "";
+	const syscall = lines.find((line) => line.startsWith("type=SYSCALL ")) ?? "";
+	const succeeded = field(syscall, "success") === "yes";
+	if (key.endsWith("credential") && succeeded) {
+		return {
+			automaticContainment: false,
+			kind: "credential-access",
+			severity: "high",
+			summary: "A process accessed protected credential material.",
+		};
+	}
+	if (key.endsWith("persistence") && succeeded) {
+		return {
+			automaticContainment: true,
+			kind: "persistence-change",
+			severity: "critical",
+			summary: "A process changed a persistent execution location.",
+		};
+	}
+	return null;
+}
+
+function kernelClassification(lines: string[]): ClassifiedAuditRecord | null {
+	const key = recordField(lines, "key") ?? "";
+	const syscall = lines.find((line) => line.startsWith("type=SYSCALL ")) ?? "";
+	const succeeded = field(syscall, "success") === "yes";
+	const auditControlChanged = lines.some((line) =>
+		line.startsWith("type=CONFIG_CHANGE ") || line.startsWith("type=DAEMON_END ")
+	);
+	if ((key.endsWith("kernel") && succeeded) || auditControlChanged) {
+		return {
+			automaticContainment: false,
+			kind: "kernel-integrity-change",
+			severity: "critical",
+			summary: "A kernel or Audit security control changed.",
+		};
+	}
+	return null;
+}
+
+function classifyAuditRecord(lines: string[]): ClassifiedAuditRecord | null {
+	return loginClassification(lines) ?? keyedClassification(lines) ?? kernelClassification(lines);
+}
+
+function recordTime(lines: string[], fallback: Date): string {
+	const value = /msg=audit\(([^:]+):/u.exec(lines[0] ?? "")?.[1];
+	const seconds = Number.parseFloat(value ?? "");
+	return Number.isFinite(seconds) ? new Date(seconds * 1_000).toISOString() : fallback.toISOString();
+}
+
+function evidenceValue(value: string | null, fallback = "unknown"): string {
+	return value === null ? fallback : value;
+}
+
+function auditSerial(lines: string[]): string {
+	const match = /msg=audit\([^:]+:(\d+)\)/u.exec(evidenceValue(lines.at(0) ?? null, ""));
+	return evidenceValue(match?.[1] ?? null, "unknown");
+}
+
+function recordEvidenceItems(lines: string[], now: Date): string[] {
+	const syscall = lines.find((line) => line.startsWith("type=SYSCALL ")) ?? "";
+	const names = lines
+		.filter((line) => line.startsWith("type=PATH "))
+		.map((line) => field(line, "name"))
+		.filter((name) => name !== null);
+	const values = [
+		`audit-serial:${auditSerial(lines)}`,
+		`audit-key:${evidenceValue(recordField(lines, "key"), "none")}`,
+		`observed-at:${recordTime(lines, now)}`,
+		`account:${evidenceValue(recordField(lines, "acct"))}`,
+		`remote-address:${evidenceValue(recordField(lines, "addr"))}`,
+		`audit-user:${evidenceValue(field(syscall, "auid"))}`,
+		`effective-user:${evidenceValue(field(syscall, "euid"))}`,
+		`child-pid:${evidenceValue(field(syscall, "pid"))}`,
+		`parent-pid:${evidenceValue(field(syscall, "ppid"))}`,
+		`child-executable:${evidenceValue(field(syscall, "exe"))}`,
+		`arguments:${evidenceValue(executionArguments(lines) || null, "unavailable")}`,
+	];
+	return [...values, ...names.map((name) => `audit-path:${auditArgument(name)}`)];
+}
+
+function serviceProcessTarget(
+	lines: string[],
+	inspector: AuditProcessInspector,
+): string | null {
+	const syscall = lines.find((line) => line.startsWith("type=SYSCALL ")) ?? "";
+	const childPid = Number.parseInt(field(syscall, "pid") ?? "", 10);
+	const auditUser = field(syscall, "auid") ?? "";
+	const effectiveUser = Number.parseInt(field(syscall, "euid") ?? "", 10);
+	if (!["4294967295", "unset"].includes(auditUser) || effectiveUser === 0 || childPid <= 1) {
+		return null;
+	}
+	try {
+		const child = inspector.identity(childPid);
+		return `pid=${child.pid},start=${child.startTimeTicks},path=${child.executable}`;
+	} catch {
+		return null;
+	}
+}
+
+function requestSuspiciousProcessPause(
+	root: string,
+	policy: OnboardingPolicy,
+	alert: Alert,
+	target: string | null,
+): void {
+	if (policy.responseMode !== "autonomous-action" || target === null) {
+		return;
+	}
+	try {
+		requestAutomaticContainment(root, {
+			action: "pause-process",
+			evidence: alert.evidence,
+			reason: "Pause the responsible service while Argus investigates the security change.",
+			target,
+		});
+		alert.evidence.push(`containment-requested:pause-process:${target}`);
+		recordEvidence(root, "containment.requested", `${alert.id}:${target}`);
+	} catch (error) {
+		const detail = error instanceof Error ? error.message : "Containment request failed.";
+		recordEvidence(root, "containment.request.failed", detail);
+	}
+}
+
+function newPersistencePath(lines: string[]): string | null {
+	const syscall = lines.find((line) => line.startsWith("type=SYSCALL ")) ?? "";
+	if (!["4294967295", "unset"].includes(field(syscall, "auid") ?? "")) {
+		return null;
+	}
+	const created = lines.find((line) =>
+		line.startsWith("type=PATH ") && field(line, "nametype") === "CREATE"
+	);
+	return field(created ?? "", "name");
+}
+
+function requestPersistenceQuarantine(
+	root: string,
+	policy: OnboardingPolicy,
+	alert: Alert,
+	lines: string[],
+): void {
+	const path = newPersistencePath(lines);
+	if (policy.responseMode !== "autonomous-action" || path === null) {
+		return;
+	}
+	try {
+		requestAutomaticContainment(root, {
+			action: "quarantine-persistence",
+			evidence: alert.evidence,
+			reason: "Quarantine a new persistent execution file created by a service.",
+			target: path,
+		});
+		alert.evidence.push(`containment-requested:quarantine-persistence:${path}`);
+		recordEvidence(root, "containment.requested", `${alert.id}:${path}`);
+	} catch (error) {
+		const detail = error instanceof Error ? error.message : "Containment request failed.";
+		recordEvidence(root, "containment.request.failed", detail);
+	}
+}
+
+function privilegedFilePath(lines: string[]): string | null {
+	const syscall = lines.find((line) => line.startsWith("type=SYSCALL ")) ?? "";
+	if (!["4294967295", "unset"].includes(field(syscall, "auid") ?? "")) {
+		return null;
+	}
+	const path = lines.find((line) => {
+		if (!line.startsWith("type=PATH ")) {
+			return false;
+		}
+		const mode = Number.parseInt(field(line, "mode") ?? "", 8);
+		return Number.isFinite(mode) && (mode & 0o6000) !== 0;
+	});
+	return field(path ?? "", "name");
+}
+
+function requestPrivilegeRemoval(
+	root: string,
+	policy: OnboardingPolicy,
+	alert: Alert,
+	lines: string[],
+): void {
+	const path = privilegedFilePath(lines);
+	if (policy.responseMode !== "autonomous-action" || path === null) {
+		return;
+	}
+	try {
+		requestAutomaticContainment(root, {
+			action: "strip-file-privileges",
+			evidence: alert.evidence,
+			reason: "Remove new set-user-ID or set-group-ID privileges created by a service.",
+			target: path,
+		});
+		alert.evidence.push(`containment-requested:strip-file-privileges:${path}`);
+		recordEvidence(root, "containment.requested", `${alert.id}:${path}`);
+	} catch (error) {
+		const detail = error instanceof Error ? error.message : "Containment request failed.";
+		recordEvidence(root, "containment.request.failed", detail);
+	}
+}
+
+function classifiedAlert(
+	root: string,
+	policy: OnboardingPolicy,
+	lines: string[],
+	now: Date,
+	inspector: AuditProcessInspector,
+): Alert | null {
+	const classification = classifyAuditRecord(lines);
+	if (classification === null) {
+		return null;
+	}
+	const alert: Alert = {
+		createdAt: now.toISOString(),
+		evidence: recordEvidenceItems(lines, now),
+		id: randomUUID(),
+		kind: classification.kind,
+		severity: classification.severity,
+		summary: classification.summary,
+	};
+	recordEvidence(root, `host.audit.${alert.kind}`, alert.evidence.join(","), now);
+	if (classification.automaticContainment) {
+		requestSuspiciousProcessPause(root, policy, alert, serviceProcessTarget(lines, inspector));
+	}
+	if (alert.kind === "persistence-change") {
+		requestPersistenceQuarantine(root, policy, alert, lines);
+		requestPrivilegeRemoval(root, policy, alert, lines);
+	}
+	return alert;
+}
+
+function auditHealthIssue(path: string): string | null {
+	if (!existsSync(path)) {
+		return `The Linux Audit log is unavailable: ${path}`;
+	}
+	return null;
+}
+
+function auditHealthAlert(root: string, path: string, now: Date): Alert | null {
+	const state = statePaths(root).auditIntegrityState;
+	const issue = auditHealthIssue(path);
+	if (issue === null) {
+		if (existsSync(state)) {
+			unlinkSync(state);
+		}
+		return null;
+	}
+	if (existsSync(state)) {
+		return null;
+	}
+	writePrivate(state, jsonText({ detail: issue, observedAt: now.toISOString() }));
+	return {
+		createdAt: now.toISOString(),
+		evidence: [issue],
+		id: randomUUID(),
+		kind: "kernel-integrity-change",
+		severity: "critical",
+		summary: "Linux Audit health failed.",
+	};
+}
+
+function serviceShellAlert(
+	root: string,
+	policy: OnboardingPolicy,
+	records: string[],
+	now: Date,
+	inspector: AuditProcessInspector,
+	seenParents: Set<number>,
+): Alert | null {
+	const observed = execution(records);
+	if (observed === null || seenParents.has(observed.parentPid)) {
+		return null;
+	}
+	const attributed = containmentTarget(observed, inspector);
+	if (attributed === null) {
+		return null;
+	}
+	const alert: Alert = {
+		createdAt: now.toISOString(),
+		evidence: attributed.evidence,
+		id: randomUUID(),
+		kind: "service-command-shell",
+		severity: "critical",
+		summary: "Linux Audit confirmed that a service process launched a command shell.",
+	};
+	recordEvidence(root, "host.audit.exec", alert.evidence.join(","), now);
+	requestContainment(root, policy, alert, attributed.target);
+	seenParents.add(observed.parentPid);
+	return alert;
 }
 
 function containmentTarget(
@@ -297,29 +626,19 @@ export function collectLinuxAuditAlerts(
 	if (process.platform !== "linux" && path === DEFAULT_AUDIT_LOG) {
 		return [];
 	}
+	const healthAlert = auditHealthAlert(root, path, now);
+	if (healthAlert !== null) {
+		recordEvidence(root, "host.audit.health", healthAlert.evidence.join(","), now);
+		return [healthAlert];
+	}
 	const alerts: Alert[] = [];
 	const seenParents = new Set<number>();
 	for (const records of auditRecordGroups(appendedAuditText(root, path))) {
-		const observed = execution(records);
-		if (observed === null || seenParents.has(observed.parentPid)) {
-			continue;
+		const alert = serviceShellAlert(root, policy, records, now, inspector, seenParents) ??
+			classifiedAlert(root, policy, records, now, inspector);
+		if (alert !== null) {
+			alerts.push(alert);
 		}
-		const attributed = containmentTarget(observed, inspector);
-		if (attributed === null) {
-			continue;
-		}
-		const alert: Alert = {
-			createdAt: now.toISOString(),
-			evidence: attributed.evidence,
-			id: randomUUID(),
-			kind: "service-command-shell",
-			severity: "critical",
-			summary: "Linux Audit confirmed that a service process launched a command shell.",
-		};
-		recordEvidence(root, "host.audit.exec", alert.evidence.join(","), now);
-		requestContainment(root, policy, alert, attributed.target);
-		seenParents.add(observed.parentPid);
-		alerts.push(alert);
 	}
 	return alerts;
 }

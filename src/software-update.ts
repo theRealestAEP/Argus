@@ -168,6 +168,12 @@ export function nativeSoftwareUpdateGateway(
 			run(
 				execute,
 				"/bin/launchctl",
+				["kickstart", "-k", "system/com.argus.ids-agent.sensor"],
+				true,
+			);
+			run(
+				execute,
+				"/bin/launchctl",
 				["kickstart", "-k", "system/com.argus.ids-agent.broker"],
 				true,
 			);

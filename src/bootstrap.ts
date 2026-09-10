@@ -71,6 +71,7 @@ export function bootstrap(
 	mkdirSync(paths.brokerRequests, { mode: 0o700, recursive: true });
 	mkdirSync(paths.brokerRejected, { mode: 0o700, recursive: true });
 	mkdirSync(paths.containmentReceipts, { mode: 0o700, recursive: true });
+	mkdirSync(paths.quarantine, { mode: 0o700, recursive: true });
 	mkdirSync(paths.reports, { mode: 0o700, recursive: true });
 	mkdirSync(paths.mailReceipts, { mode: 0o700, recursive: true });
 	mkdirSync(paths.operatorMessages, { mode: 0o700, recursive: true });
@@ -94,12 +95,14 @@ export function bootstrap(
 			paths.memoryPacks,
 			paths.logs,
 			paths.eventLog,
+			paths.macosSensor,
 			paths.alerts,
 			paths.alertWorking,
 			paths.archiveReceipts,
 			paths.brokerRequests,
 			paths.brokerRejected,
 			paths.containmentReceipts,
+			paths.quarantine,
 			paths.reports,
 			paths.mailReceipts,
 			paths.operatorMessages,
@@ -116,6 +119,14 @@ export function bootstrap(
 			paths.emailCursor,
 			paths.reviewState,
 			paths.auditCursor,
+			paths.auditIntegrityState,
+			paths.macosCursor,
+			paths.macosEventDedup,
+			paths.macosIntegrityState,
+			paths.macosParserStatus,
+			paths.macosSensorLog,
+			paths.macosSensorStatus,
+			paths.macosServiceState,
 			paths.processSnapshot,
 			paths.privateKey,
 			paths.publicKey,

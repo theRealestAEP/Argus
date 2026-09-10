@@ -7,7 +7,7 @@ import type { ProcessIdentity } from "./containment.js";
 import type { Alert, AgentRuntimeEvent, OnboardingPolicy } from "./contracts.js";
 import { agentRuntimeEventSchema } from "./contracts.js";
 import { recordEvidence } from "./evidence-store.js";
-import { nativeContainmentGateway } from "./linux-containment-native.js";
+import { nativeContainmentGateway } from "./native-containment.js";
 import { statePaths } from "./paths.js";
 
 export interface AgentProcessInspector {

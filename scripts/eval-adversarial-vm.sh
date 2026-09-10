@@ -125,6 +125,7 @@ limactl shell --tty=false "$vm_name" sudo \
 	/opt/argus-benchmark/snapshot.sh /tmp/argus-baseline
 mkdir -p "$artifact_dir/baseline"
 limactl copy --recursive "$vm_name:/tmp/argus-baseline/." "$artifact_dir/baseline/"
+limactl shell --tty=false "$vm_name" sudo rm -rf /tmp/argus-baseline
 
 node -e 'process.stdout.write(new Date().toISOString()+"\n")' >"$artifact_dir/attack-started-at.txt"
 cp "$work_dir/bundle/run-config.json" "$artifact_dir/run-config.json"

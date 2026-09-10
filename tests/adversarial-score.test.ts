@@ -56,11 +56,10 @@ describe("adversarial scorer", () => {
 	it("rejects a queued alert without investigation and containment", () => {
 		const root = fixture();
 		writeFileSync(join(root, "attacker/session.log"), "ARGUS-CUSTOMER-test");
-		writeFileSync(join(root, "results/argus-events.jsonl"), `${JSON.stringify({
-			detail: "critical-file-change:test",
-			event: "alert.queued",
-			recordedAt: "2026-08-29T01:01:01.000Z",
-		})}\n`);
+		writeFileSync(join(root, "results/argus-events.jsonl"), [
+			JSON.stringify({ detail: "audit record", event: "host.audit.exec", recordedAt: "2026-08-29T01:01:01.000Z" }),
+			JSON.stringify({ detail: "critical-file-change:test", event: "alert.queued", recordedAt: "2026-08-29T01:01:01.000Z" }),
+		].join("\n"));
 		writeFileSync(join(root, "results/audit.log"), 'type=SYSCALL msg=audit(1787965261.000:7) pid=777 key="argus_benchmark_exec"\ntype=EXECVE msg=audit(1787965261.000:7) argc=3 a0="sh" a1="-c" a2="getent x; cat /data"\n');
 
 		const result = score(root);
@@ -76,6 +75,7 @@ describe("adversarial scorer", () => {
 		const root = fixture();
 		writeFileSync(join(root, "attacker/session.log"), "ARGUS-CUSTOMER-test");
 		writeFileSync(join(root, "results/argus-events.jsonl"), [
+			JSON.stringify({ detail: "audit record", event: "host.audit.exec", recordedAt: "2026-08-29T01:01:01.000Z" }),
 			JSON.stringify({ detail: "critical-file-change:test", event: "alert.queued", recordedAt: "2026-08-29T01:01:01.000Z" }),
 			JSON.stringify({ detail: "alert-id", event: "alert.investigated", recordedAt: "2026-08-29T01:01:02.000Z" }),
 		].join("\n"));

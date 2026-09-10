@@ -38,7 +38,7 @@ describe("investigation tools", () => {
 			"connections",
 			"critical-files",
 			"process",
-		])).toEqual({
+		], "linux")).toEqual({
 			connections: { unavailable: "Linux sensor state is absent." },
 			"critical-files": { unavailable: "Linux sensor state is absent." },
 			process: { unavailable: expect.stringContaining("ENOENT") },
@@ -85,7 +85,7 @@ describe("investigation tools", () => {
 			"critical-files",
 			"process",
 			"service",
-		]);
+		], "linux");
 
 		expect(evidence).toMatchObject({
 			"audit-events": { records: ["audit-serial:7"] },

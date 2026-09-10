@@ -146,7 +146,7 @@ describe("software updates", () => {
 			throw new Error("service absent");
 		});
 		nativeSoftwareUpdateGateway(execute).restart("darwin");
-		expect(execute).toHaveBeenCalledTimes(2);
+		expect(execute).toHaveBeenCalledTimes(3);
 	});
 
 	test("installs a matching archive and restarts the service", async () => {

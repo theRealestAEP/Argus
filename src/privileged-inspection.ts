@@ -3,7 +3,8 @@ import { z } from "zod";
 
 import type { ProcessIdentity } from "./containment.js";
 import { jsonText, writePrivate } from "./files.js";
-import { nativeProcessIdentity } from "./linux-containment-native.js";
+import { nativeMacosProcessSnapshot } from "./macos-containment-native.js";
+import { nativeProcessIdentity } from "./native-containment.js";
 import { statePaths } from "./paths.js";
 
 const processIdentitySchema = z.object({
@@ -23,9 +24,25 @@ export interface PrivilegedProcessSource {
 }
 
 function nativeSource(): PrivilegedProcessSource {
-	return {
+	return process.platform === "darwin" ? macosProcessSource() : {
 		identity: nativeProcessIdentity,
 		processNames: () => readdirSync("/proc"),
+	};
+}
+
+export function macosProcessSource(
+	snapshot: ProcessIdentity[] = nativeMacosProcessSnapshot(),
+): PrivilegedProcessSource {
+	const processes = new Map(snapshot.map((item) => [item.pid, item]));
+	return {
+		identity(pid) {
+			const identity = processes.get(pid);
+			if (identity === undefined) {
+				throw new Error(`Process ${pid} is absent.`);
+			}
+			return identity;
+		},
+		processNames: () => [...processes.keys()].map(String),
 	};
 }
 

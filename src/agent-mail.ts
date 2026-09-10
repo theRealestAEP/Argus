@@ -64,6 +64,16 @@ export interface AgentMailMessageGateway {
 	): Promise<void>;
 }
 
+type PendingReport = {
+	name: string;
+	report: IncidentReport;
+};
+
+type ReportMessage = {
+	subject: string;
+	text: string;
+};
+
 export function agentMailMessageHttpGateway(
 	http: typeof fetch = fetch,
 ): AgentMailMessageGateway {
@@ -262,23 +272,86 @@ export async function sendAgentMailReport(
 	apiKey: string | undefined,
 	gateway: AgentMailMessageGateway = agentMailMessageHttpGateway(),
 ): Promise<boolean> {
-	const inbox = policy.agentMailInbox;
-	const recipients = policy.emailReportRecipients ?? [];
-	if (
-		inbox === undefined || inbox === null || apiKey === undefined || apiKey.length === 0 ||
-		recipients.length === 0
-	) {
+	return sendAgentMailReports(policy, [report], apiKey, gateway);
+}
+
+async function sendAgentMailReports(
+	policy: OnboardingPolicy,
+	reports: IncidentReport[],
+	apiKey: string | undefined,
+	gateway: AgentMailMessageGateway,
+): Promise<boolean> {
+	const connection = mailConnection(policy, apiKey);
+	const allowed = (policy.emailReportRecipients ?? []).filter((recipient) =>
+		canSendReport(policy.emailReportRecipients, recipient)
+	);
+	if (connection === null || allowed.length === 0 || reports.length === 0) {
 		return false;
 	}
-	const allowed = recipients.filter((recipient) => canSendReport(recipients, recipient));
+	const message = reportMessage(reports);
 	await gateway.sendMessage(
-		inbox,
+		connection.inbox,
 		allowed,
-		`Argus security report ${report.id}`,
-		report.report,
-		apiKey,
+		message.subject,
+		message.text,
+		connection.apiKey,
 	);
 	return true;
+}
+
+function reportMessage(reports: IncidentReport[]): ReportMessage {
+	const first = reports[0];
+	if (reports.length === 1 && first !== undefined) {
+		return { subject: `Argus security report ${first.id}`, text: first.report };
+	}
+	return {
+		subject: `Argus security summary: ${reports.length} reports`,
+		text: reports.map((report, index) =>
+			`Report ${index + 1} of ${reports.length}\n\n${report.report}`
+		).join("\n\n---\n\n"),
+	};
+}
+
+function pendingReports(root: string): PendingReport[] {
+	const paths = statePaths(root);
+	return readdirSync(paths.reports).toSorted().flatMap((name) => {
+		if (existsSync(join(paths.mailReceipts, `${name}.json`))) {
+			return [];
+		}
+		const report = incidentReportSchema.parse(
+			JSON.parse(readFileSync(join(paths.reports, name), "utf8")),
+		);
+		return [{ name, report }];
+	});
+}
+
+function isRoutineReport(report: IncidentReport): boolean {
+	return report.alertKind === "remote-login" || report.alertKind === "scheduled-review" ||
+		report.severity === "low" || report.severity === "medium";
+}
+
+function receiptReports(root: string, reports: PendingReport[], now: Date): void {
+	for (const item of reports) {
+		writePrivate(
+			join(statePaths(root).mailReceipts, `${item.name}.json`),
+			jsonText({ deliveredAt: now.toISOString(), reportId: item.report.id }),
+		);
+	}
+}
+
+async function deliverReportGroup(
+	root: string,
+	policy: OnboardingPolicy,
+	apiKey: string | undefined,
+	reports: PendingReport[],
+	gateway: AgentMailMessageGateway,
+	now: Date,
+): Promise<number> {
+	if (!await sendAgentMailReports(policy, reports.map((item) => item.report), apiKey, gateway)) {
+		return 0;
+	}
+	receiptReports(root, reports, now);
+	return reports.length;
 }
 
 export async function deliverPendingAgentMailReports(
@@ -286,22 +359,14 @@ export async function deliverPendingAgentMailReports(
 	policy: OnboardingPolicy,
 	apiKey: string | undefined,
 	gateway: AgentMailMessageGateway = agentMailMessageHttpGateway(),
+	now = new Date(),
 ): Promise<number> {
-	const paths = statePaths(root);
-	let delivered = 0;
-	for (const name of readdirSync(paths.reports).toSorted()) {
-		const receipt = join(paths.mailReceipts, `${name}.json`);
-		if (existsSync(receipt)) {
-			continue;
-		}
-		const report = incidentReportSchema.parse(
-			JSON.parse(readFileSync(join(paths.reports, name), "utf8")),
-		);
-		if (!await sendAgentMailReport(policy, report, apiKey, gateway)) {
-			return delivered;
-		}
-		writePrivate(receipt, jsonText({ deliveredAt: new Date().toISOString(), reportId: report.id }));
-		delivered += 1;
+	const pending = pendingReports(root);
+	const urgent = pending.filter((item) => !isRoutineReport(item.report));
+	const routine = pending.filter((item) => isRoutineReport(item.report));
+	let delivered = await deliverReportGroup(root, policy, apiKey, urgent, gateway, now);
+	if (routine.some((item) => item.report.alertKind === "scheduled-review")) {
+		delivered += await deliverReportGroup(root, policy, apiKey, routine, gateway, now);
 	}
 	return delivered;
 }

@@ -1,5 +1,6 @@
 import { randomUUID, sign, verify } from "node:crypto";
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 
 import type {
 	Alert,
@@ -16,6 +17,10 @@ import { jsonText, writePrivate } from "./files.js";
 import { statePaths } from "./paths.js";
 import { collectLinuxSnapshot } from "./linux-native.js";
 import { initializeLinuxAuditCursor } from "./linux-audit.js";
+import { requestAutomaticContainment } from "./containment-broker.js";
+import { isPersistencePathAllowed } from "./containment.js";
+import { recordEvidence } from "./evidence-store.js";
+import { readPolicy } from "./onboarding.js";
 
 export { collectLinuxSnapshot } from "./linux-native.js";
 
@@ -158,13 +163,21 @@ function criticalFileAlerts(
 	const currentPaths = new Set(current.criticalFiles.map((item) => item.path));
 	const changed = current.criticalFiles
 		.filter((file) => fileChanged(oldFiles.get(file.path), file))
-		.map((file) => alert(
-			"critical-file-change",
-			"high",
-			`A critical file changed: ${file.path}`,
-			[`${file.path}:${file.size}:${file.modifiedAtMs}`],
-			now,
-		));
+		.map((file) => oldFiles.has(file.path) || !isPersistencePathAllowed(file.path)
+			? alert(
+				"critical-file-change",
+				"high",
+				`A critical file changed: ${file.path}`,
+				[`${file.path}:${file.size}:${file.modifiedAtMs}`],
+				now,
+			)
+			: alert(
+				"persistence-change",
+				"critical",
+				`A new persistent execution file appeared: ${file.path}`,
+				[`persistence-path:${file.path}`],
+				now,
+			));
 	const removed = previous.criticalFiles
 		.filter((file) => !currentPaths.has(file.path))
 		.map((file) => alert(
@@ -175,6 +188,86 @@ function criticalFileAlerts(
 			now,
 		));
 	return [...changed, ...removed];
+}
+
+function requestPersistenceContainment(root: string, alerts: Alert[]): void {
+	const policy = readPolicy(root);
+	if (policy.responseMode !== "autonomous-action") {
+		return;
+	}
+	for (const item of alerts.filter((alertItem) => alertItem.kind === "persistence-change")) {
+		const path = item.evidence.find((entry) => entry.startsWith("persistence-path:"))?.slice(17);
+		if (path === undefined) {
+			continue;
+		}
+		try {
+			requestAutomaticContainment(root, {
+				action: "quarantine-persistence",
+				evidence: item.evidence,
+				reason: "Quarantine a new persistent execution file found by baseline comparison.",
+				target: path,
+			});
+			item.evidence.push(`containment-requested:quarantine-persistence:${path}`);
+			recordEvidence(root, "containment.requested", `${item.id}:${path}`);
+		} catch (error) {
+			const detail = error instanceof Error ? error.message : "Containment request failed.";
+			recordEvidence(root, "containment.request.failed", detail);
+		}
+	}
+}
+
+export type ServiceStatusReader = (unit: string) => boolean;
+export type SnapshotCollector = (criticalPaths: string[], now: Date) => LinuxSnapshot;
+
+function nativeServiceActive(unit: string): boolean {
+	const result = spawnSync("systemctl", ["is-active", "--quiet", unit], {
+		stdio: "ignore",
+		timeout: 5_000,
+	});
+	return result.status === 0;
+}
+
+export function detectStoppedServices(
+	policy: OnboardingPolicy,
+	now = new Date(),
+	isActive: ServiceStatusReader = nativeServiceActive,
+): Alert[] {
+	return policy.expectedServices
+		.filter((unit) => unit.endsWith(".service"))
+		.filter((unit) => !isActive(unit))
+		.map((unit) => alert(
+			"service-stopped",
+			"critical",
+			`An expected service stopped: ${unit}`,
+			[`service-unit:${unit}`, "systemctl-state:inactive"],
+			now,
+		));
+}
+
+function requestServiceRestoration(root: string, alerts: Alert[]): void {
+	const policy = readPolicy(root);
+	if (policy.responseMode !== "autonomous-action") {
+		return;
+	}
+	for (const item of alerts.filter((alertItem) => alertItem.kind === "service-stopped")) {
+		const unit = item.evidence.find((entry) => entry.startsWith("service-unit:"))?.slice(13);
+		if (unit === undefined) {
+			continue;
+		}
+		try {
+			requestAutomaticContainment(root, {
+				action: "start-service",
+				evidence: item.evidence,
+				reason: "Restore an expected service that stopped outside the declared plan.",
+				target: unit,
+			});
+			item.evidence.push(`containment-requested:start-service:${unit}`);
+			recordEvidence(root, "containment.requested", `${item.id}:${unit}`);
+		} catch (error) {
+			const detail = error instanceof Error ? error.message : "Containment request failed.";
+			recordEvidence(root, "containment.request.failed", detail);
+		}
+	}
 }
 
 function authenticationAlerts(
@@ -281,7 +374,12 @@ export function runSensorCanary(
 	};
 }
 
-export function collectSensorAlerts(root: string, now = new Date()): Alert[] {
+export function collectSensorAlerts(
+	root: string,
+	now = new Date(),
+	collectSnapshot: SnapshotCollector = collectLinuxSnapshot,
+	isServiceActive: ServiceStatusReader = nativeServiceActive,
+): Alert[] {
 	const paths = statePaths(root);
 	let config: SensorConfig;
 	try {
@@ -304,7 +402,13 @@ export function collectSensorAlerts(root: string, now = new Date()): Alert[] {
 		unlinkSync(paths.sensorIntegrityState);
 	}
 	const previous = linuxSnapshotSchema.parse(JSON.parse(readFileSync(paths.sensorState, "utf8")));
-	const current = collectLinuxSnapshot(config.criticalPaths, now);
+	const current = collectSnapshot(config.criticalPaths, now);
 	writePrivate(paths.sensorState, jsonText(current));
-	return detectLinuxAlerts(config, previous, current, now);
+	const alerts = [
+		...detectLinuxAlerts(config, previous, current, now),
+		...detectStoppedServices(readPolicy(root), now, isServiceActive),
+	];
+	requestPersistenceContainment(root, alerts);
+	requestServiceRestoration(root, alerts);
+	return alerts;
 }

@@ -46,17 +46,19 @@ export function completeAlert(claimed: ClaimedAlert): void {
 
 export function saveIncidentReport(
 	root: string,
-	alertId: string,
+	alert: Alert,
 	model: string,
 	report: string,
 	now = new Date(),
 ): IncidentReport {
 	const incident = incidentReportSchema.parse({
-		alertId,
+		alertId: alert.id,
+		alertKind: alert.kind,
 		createdAt: now.toISOString(),
 		id: randomUUID(),
 		model,
 		report,
+		severity: alert.severity,
 	});
 	writePrivate(join(statePaths(root).reports, `${incident.createdAt}-${incident.id}.json`), jsonText(incident));
 	return incident;

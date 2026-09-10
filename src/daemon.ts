@@ -61,13 +61,13 @@ export async function runDaemon(
 		await runOperationalCycle(root);
 		cycleActive = false;
 	};
-	await tick();
 	const timer = setInterval(() => void tick(), 30_000);
 	const urgentTimer = setInterval(() => collectUrgentHostAlerts(root), 2_000);
 	const auditWatcher = process.platform === "linux"
 		? watchLinuxAudit(() => collectUrgentHostAlerts(root))
 		: null;
 	try {
+		await tick();
 		await stopped;
 	} finally {
 		clearInterval(timer);

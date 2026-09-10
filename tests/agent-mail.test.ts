@@ -21,7 +21,7 @@ import {
 } from "../src/agent-mail.js";
 import { saveIncidentReport } from "../src/alert-queue.js";
 import { bootstrap } from "../src/bootstrap.js";
-import type { OnboardingAnswers, OnboardingPolicy } from "../src/contracts.js";
+import type { Alert, OnboardingAnswers, OnboardingPolicy } from "../src/contracts.js";
 import { statePaths } from "../src/paths.js";
 
 function mailAnswers(): OnboardingAnswers {
@@ -104,7 +104,14 @@ describe("Agent Mail setup", () => {
 		const policy = mailPolicy(root);
 		const report = saveIncidentReport(
 			root,
-			"123e4567-e89b-42d3-a456-426614174000",
+			{
+				createdAt: "2026-01-01T00:00:00.000Z",
+				evidence: ["event:test"],
+				id: "123e4567-e89b-42d3-a456-426614174000",
+				kind: "new-listener",
+				severity: "high",
+				summary: "A listener opened.",
+			},
 			"model",
 			"report text",
 		);
@@ -126,6 +133,60 @@ describe("Agent Mail setup", () => {
 		]);
 		await expect(sendAgentMailReport({ ...policy, agentMailInbox: null }, report, "key", gateway))
 			.resolves.toBe(false);
+	});
+
+	test("groups routine reports with the scheduled review", async () => {
+		const root = mkdtempSync(join(tmpdir(), "argus-mail-test-"));
+		const policy = mailPolicy(root);
+		const createdAt = new Date("2026-01-02T00:00:00.000Z");
+		const alert = (id: string): Alert => ({
+			createdAt: createdAt.toISOString(),
+			evidence: ["remote-address:192.0.2.8"],
+			id,
+			kind: "remote-login",
+			severity: "high",
+			summary: "A remote login succeeded.",
+		});
+		saveIncidentReport(root, alert("123e4567-e89b-42d3-a456-426614174001"), "model", "first", createdAt);
+		saveIncidentReport(root, alert("123e4567-e89b-42d3-a456-426614174002"), "model", "second", createdAt);
+		const messages: Array<{ subject: string; text: string }> = [];
+		const gateway: AgentMailMessageGateway = {
+			getMessage: () => Promise.reject(new Error("unexpected read")),
+			listMessages: () => Promise.resolve([]),
+			sendMessage: (_inbox, _to, subject, text) => {
+				messages.push({ subject, text });
+				return Promise.resolve();
+			},
+		};
+
+		await expect(deliverPendingAgentMailReports(
+			root,
+			policy,
+			"key",
+			gateway,
+			new Date("2026-01-03T00:00:00.000Z"),
+		)).resolves.toBe(0);
+		saveIncidentReport(root, {
+			createdAt: "2026-01-03T00:00:00.000Z",
+			evidence: ["scheduled-review:2026-01-03"],
+			id: "123e4567-e89b-42d3-a456-426614174003",
+			kind: "scheduled-review",
+			severity: "low",
+			summary: "Run the scheduled security review.",
+		}, "model", "scheduled review", new Date("2026-01-03T00:00:00.000Z"));
+		await expect(deliverPendingAgentMailReports(
+			root,
+			policy,
+			"key",
+			gateway,
+			new Date("2026-01-03T00:00:01.000Z"),
+		)).resolves.toBe(3);
+		expect(messages).toHaveLength(1);
+		expect(messages[0]?.subject).toBe("Argus security summary: 3 reports");
+		expect(messages[0]?.text).toContain("first");
+		expect(messages[0]?.text).toContain("second");
+		expect(messages[0]?.text).toContain("scheduled review");
+		expect(readdirSync(statePaths(root).mailReceipts)).toHaveLength(3);
 	});
 
 	test("implements the Agent Mail message HTTP API", async () => {

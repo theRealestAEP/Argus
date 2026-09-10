@@ -7,7 +7,7 @@ import { describe, expect, test } from "vitest";
 
 import { saveIncidentReport } from "../src/alert-queue.js";
 import { bootstrap } from "../src/bootstrap.js";
-import type { OnboardingAnswers, OnboardingPolicy } from "../src/contracts.js";
+import type { Alert, OnboardingAnswers, OnboardingPolicy } from "../src/contracts.js";
 import {
 	archiveIncidentReports,
 	type ArchiveGateway,
@@ -37,7 +37,14 @@ describe("S3 report archive", () => {
 		const policy: OnboardingPolicy = { ...setup, createdAt: manifest.createdAt };
 		saveIncidentReport(
 			root,
-			"123e4567-e89b-42d3-a456-426614174000",
+			{
+				createdAt: "2026-01-02T00:00:00.000Z",
+				evidence: ["event:test"],
+				id: "123e4567-e89b-42d3-a456-426614174000",
+				kind: "new-listener",
+				severity: "high",
+				summary: "A listener opened.",
+			} satisfies Alert,
 			"model",
 			"report text",
 			new Date("2026-01-02T00:00:00.000Z"),

@@ -14,6 +14,7 @@ import type { Alert } from "./contracts.js";
 import { recordEvidence } from "./evidence-store.js";
 import { collectSensorAlerts } from "./linux-sensors.js";
 import { collectLinuxAuditAlerts } from "./linux-audit.js";
+import { collectMacosAlerts } from "./macos-eslogger.js";
 import { collectInvestigationEvidence } from "./investigation-tools.js";
 import {
 	INVESTIGATION_TOOL_NAMES,
@@ -37,6 +38,7 @@ async function collectAlerts(root: string): Promise<Alert[]> {
 	const alerts = existsSync(paths.sensorConfig) ? collectSensorAlerts(root) : [];
 	const policy = readPolicy(root);
 	const auditAlerts = collectLinuxAuditAlerts(root, policy);
+	const macosAlerts = process.platform === "darwin" ? collectMacosAlerts(root, policy) : [];
 	const agentAlerts = collectAgentRuntimeAlerts(root, policy, alerts);
 	const messages = await pollAgentMail(root, policy, process.env.AGENTMAIL_API_KEY);
 	saveOperatorMessages(root, messages);
@@ -44,13 +46,16 @@ async function collectAlerts(root: string): Promise<Alert[]> {
 		recordEvidence(root, "operator.email.received", message.id);
 	}
 	const review = dueReviewAlert(root, policy.reviewSchedule);
-	const collected = [...alerts, ...auditAlerts, ...agentAlerts];
+	const collected = [...alerts, ...auditAlerts, ...macosAlerts, ...agentAlerts];
 	return review === null ? collected : [...collected, review];
 }
 
 export function collectUrgentHostAlerts(root: string): void {
 	const policy = readPolicy(root);
-	for (const alert of collectLinuxAuditAlerts(root, policy)) {
+	const alerts = process.platform === "darwin"
+		? collectMacosAlerts(root, policy)
+		: collectLinuxAuditAlerts(root, policy);
+	for (const alert of alerts) {
 		enqueueAlert(root, alert);
 		recordEvidence(root, "alert.queued", `${alert.kind}:${alert.id}`);
 	}
@@ -95,7 +100,16 @@ function matchingContainmentReceipts(root: string, alert: Alert) {
 }
 
 async function investigateAlert(root: string, alert: Alert) {
-	if (alert.kind === "service-command-shell") {
+	if ([
+		"credential-access",
+		"kernel-integrity-change",
+		"malware-detected",
+		"persistence-change",
+		"process-tampering",
+		"remote-login",
+		"service-command-shell",
+		"service-stopped",
+	].includes(alert.kind)) {
 		const toolEvidence = collectInvestigationEvidence(
 			root,
 			alert,

@@ -6,6 +6,7 @@ import type { CapabilityProbe, CapabilityReport, HostIdentity } from "./contract
 import { jsonText, writePrivate } from "./files.js";
 import { detectHost } from "./host.js";
 import { statePaths } from "./paths.js";
+import { macosPipelineReady, macosSensorReady } from "./macos-eslogger.js";
 
 export function commandExists(
 	command: string,
@@ -50,12 +51,20 @@ function probe(
 	};
 }
 
-function macProbes(): CapabilityProbe[] {
-	const root = process.geteuid?.() === 0;
+function macSensorReady(root: string | undefined): boolean {
+	return root === undefined ? false : macosSensorReady(root);
+}
+
+function macProbes(root: string | undefined): CapabilityProbe[] {
 	const brokerReady = canRun(
 		"/bin/launchctl",
 		["print", "system/com.argus.ids-agent.broker"],
 	);
+	const sensorReady = canRun(
+		"/bin/launchctl",
+		["print", "system/com.argus.ids-agent.sensor"],
+	) && macSensorReady(root);
+	const pipelineReady = root !== undefined && macosPipelineReady(root);
 	return [
 		probe(
 			"macos-unified-log",
@@ -67,29 +76,30 @@ function macProbes(): CapabilityProbe[] {
 		probe(
 			"macos-full-disk-access",
 			"investigate",
-			canRead("/Library/Application Support/com.apple.TCC/TCC.db"),
-			"Read protected security and application data selected by policy.",
-			"Open System Settings > Privacy & Security > Full Disk Access. Add the installed agent service.",
+			sensorReady,
+			"Allow Apple's eslogger to receive Endpoint Security events.",
+			"Open System Settings > Privacy & Security > Full Disk Access. Add Argus Sensor from Applications. Then run ids-agent access.",
 		),
 		probe(
 			"macos-endpoint-events",
 			"detect",
-			commandExists("eslogger") && root,
+			commandExists("eslogger") && pipelineReady,
 			"Receive process, file, and authentication events through Endpoint Security.",
-			"Install the signed sensor and approve its Endpoint Security access.",
+			"Start the Argus daemon and sensor. Grant Argus Sensor Full Disk Access. Wait for one event, then run ids-agent access.",
 		),
 		probe(
 			"macos-mitigation-broker",
 			"mitigate",
 			brokerReady,
-			"Perform approved process, service, account, and firewall actions.",
-			"Install the signed privileged broker and approve it with native administrator authentication.",
+			"Perform approved process, service, and persistence actions.",
+			"Install the root-owned broker with native administrator authentication.",
 		),
 	];
 }
 
 function linuxProbes(): CapabilityProbe[] {
 	const auditPath = "/var/log/audit/audit.log";
+	const auditRulesPath = "/etc/audit/rules.d/argus.rules";
 	const journalReady = commandExists("journalctl") && canRun("journalctl", ["--no-pager", "-n", "1"]);
 	const firewallReady = commandExists("nft") || commandExists("iptables");
 	const brokerReady = commandExists("systemctl") && canRun(
@@ -107,9 +117,9 @@ function linuxProbes(): CapabilityProbe[] {
 		probe(
 			"linux-audit",
 			"detect",
-			canRead(auditPath),
-			"Read Linux Audit events.",
-			"Install and enable auditd. Give the broker read access to the audit log.",
+			canRead(auditPath) && canRead(auditRulesPath),
+			"Read Linux Audit events from the installed Argus rules.",
+			"Install and enable auditd. Install the Argus Audit rules. Give the agent read access to the audit log.",
 		),
 		probe(
 			"linux-process-state",
@@ -137,13 +147,14 @@ function linuxProbes(): CapabilityProbe[] {
 
 export function platformProbes(
 	platform: HostIdentity["platform"],
+	root?: string,
 ): CapabilityProbe[] {
-	return platform === "darwin" ? macProbes() : linuxProbes();
+	return platform === "darwin" ? macProbes(root) : linuxProbes();
 }
 
-export function inspectCapabilities(now = new Date()): CapabilityReport {
+export function inspectCapabilities(now = new Date(), root?: string): CapabilityReport {
 	const host = detectHost();
-	const probes = platformProbes(host.platform);
+	const probes = platformProbes(host.platform, root);
 	return {
 		checkedAt: now.toISOString(),
 		hostFingerprint: host.fingerprint,

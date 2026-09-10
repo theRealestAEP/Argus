@@ -12,6 +12,7 @@ import {
 	buildSensorPlanReviewRequest,
 	buildSubagentRequest,
 	buildSensorCommissioningRequest,
+	formatInvestigationReport,
 	guidedOnboardingTurn,
 	guidedOnboardingWithGateway,
 	investigateDirect,
@@ -324,6 +325,7 @@ describe("model runtime", () => {
 		const decision = {
 			confidence: 95,
 			evidenceRequests: ["connections"],
+			plainEnglishSummary: "Argus found a hostile command. Argus blocked its network access.",
 			recommendedAction: "block-user-egress",
 			report: "Confirmed hostile service command.",
 			verdict: "confirmed-hostile",
@@ -339,13 +341,15 @@ describe("model runtime", () => {
 		);
 
 		expect(result.decision).toEqual(decision);
-		expect(result.report).toBe(decision.report);
+		expect(result.report).toBe(formatInvestigationReport(result.decision));
+		expect(result.report.startsWith("## Plain-English summary")).toBe(true);
 	});
 
 	test("runs one direct investigator pass for verified host evidence", async () => {
 		const decision = {
 			confidence: 99,
 			evidenceRequests: [],
+			plainEnglishSummary: "Argus found and stopped a hostile command. No user action is required now.",
 			recommendedAction: "terminate-process",
 			report: "Argus contained the confirmed command execution.",
 			verdict: "confirmed-hostile",
@@ -375,6 +379,7 @@ describe("model runtime", () => {
 		const decision = JSON.stringify({
 			confidence: 90,
 			evidenceRequests: [],
+			plainEnglishSummary: "Argus saved the available evidence. An administrator should review it.",
 			recommendedAction: "preserve",
 			report: "Evidence preserved.",
 			verdict: "suspicious",
@@ -465,7 +470,7 @@ describe("model runtime", () => {
 			compactionId: "compact-id",
 			fallbackUsed: false,
 			mainResponseId: "main-id",
-			report: "report",
+			report: "## Plain-English summary\n\nArgus could not produce a verified summary. Review the technical details below.\n\nreport",
 			requestedModel: "primary",
 			subagentAnalysis: "analysis",
 			subagentResponseId: "subagent-id",

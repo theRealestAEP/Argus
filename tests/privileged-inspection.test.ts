@@ -6,12 +6,21 @@ import { describe, expect, test } from "vitest";
 
 import { bootstrap } from "../src/bootstrap.js";
 import {
+	macosProcessSource,
 	readPrivilegedProcessIdentity,
 	refreshPrivilegedProcessSnapshot,
 } from "../src/privileged-inspection.js";
 import { statePaths } from "../src/paths.js";
 
 describe("privileged process inspection", () => {
+	test("serves one captured macOS process table", () => {
+		const identity = { executable: "/usr/bin/node", pid: 42, startTimeTicks: "91" };
+		const source = macosProcessSource([identity]);
+		expect(source.processNames()).toEqual(["42"]);
+		expect(source.identity(42)).toEqual(identity);
+		expect(() => source.identity(43)).toThrow("absent");
+	});
+
 	test("publishes exact process identities to the service account", () => {
 		const root = mkdtempSync(join(tmpdir(), "argus-process-snapshot-test-"));
 		bootstrap(root, {

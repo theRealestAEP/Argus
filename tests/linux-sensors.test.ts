@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -15,6 +15,7 @@ import {
 	commissionLinuxSensors,
 	createSensorConfig,
 	detectLinuxAlerts,
+	detectStoppedServices,
 	readSensorConfig,
 	runSensorCanary,
 } from "../src/linux-sensors.js";
@@ -153,6 +154,42 @@ describe("Linux sensors", () => {
 		expect(detectLinuxAlerts(disabled, baseline, removed)).toEqual([]);
 	});
 
+	test("classifies a new authorized key as persistence", () => {
+		const baseline = snapshot();
+		const config = createSensorConfig(baseline, ["/home/app"], selection);
+		const current = {
+			...baseline,
+			criticalFiles: [
+				...baseline.criticalFiles,
+				{ modifiedAtMs: 2, path: "/home/app/.ssh/authorized_keys", size: 80 },
+			],
+		};
+
+		expect(detectLinuxAlerts(config, baseline, current).at(0)).toMatchObject({
+			evidence: ["persistence-path:/home/app/.ssh/authorized_keys"],
+			kind: "persistence-change",
+			severity: "critical",
+		});
+	});
+
+	test("detects an expected systemd service that stopped", () => {
+		const policyAnswers = {
+			...answers(),
+			expectedServices: ["web.service", "database.service", "port:8080"],
+		};
+		const policy = {
+			...policyAnswers,
+			createdAt: "2026-01-01T00:00:00.000Z",
+		};
+		const active = (unit: string) => unit === "database.service";
+
+		expect(detectStoppedServices(policy, new Date(), active)).toMatchObject([{
+			evidence: ["service-unit:web.service", "systemctl-state:inactive"],
+			kind: "service-stopped",
+			severity: "critical",
+		}]);
+	});
+
 	test("signs and verifies the commissioned configuration", () => {
 		const root = mkdtempSync(join(tmpdir(), "argus-sensor-test-"));
 		const policyAnswers = answers();
@@ -191,6 +228,43 @@ describe("Linux sensors", () => {
 			severity: "critical",
 		});
 		expect(collectSensorAlerts(root)).toEqual([]);
+	});
+
+	test("requests quarantine and service restoration from a healthy sensor cycle", () => {
+		const root = mkdtempSync(join(tmpdir(), "argus-sensor-response-test-"));
+		const policyAnswers = {
+			...answers(),
+			expectedServices: ["web.service"],
+			responseMode: "autonomous-action" as const,
+		};
+		const manifest = bootstrap(root, policyAnswers);
+		commissionLinuxSensors(
+			root,
+			{ ...policyAnswers, createdAt: manifest.createdAt },
+			selection,
+			snapshot(),
+		);
+		writeFileSync(statePaths(root).sensorIntegrityState, "stale\n");
+		const current = {
+			...snapshot(),
+			criticalFiles: [
+				...snapshot().criticalFiles,
+				{ modifiedAtMs: 2, path: "/home/app/.ssh/authorized_keys", size: 80 },
+			],
+		};
+
+		const alerts = collectSensorAlerts(
+			root,
+			new Date("2026-01-01T00:00:30.000Z"),
+			() => current,
+			() => false,
+		);
+
+		expect(alerts.map((item) => item.kind)).toEqual([
+			"persistence-change",
+			"service-stopped",
+		]);
+		expect(readdirSync(statePaths(root).brokerRequests)).toHaveLength(4);
 	});
 
 	test("reports commissioned sensor health to doctor", () => {

@@ -14,6 +14,11 @@ export const MACOS_SERVICE_PATH =
 	"/Library/LaunchDaemons/com.argus.ids-agent.plist";
 export const MACOS_BROKER_SERVICE_PATH =
 	"/Library/LaunchDaemons/com.argus.ids-agent.broker.plist";
+export const MACOS_SENSOR_SERVICE_PATH =
+	"/Library/LaunchDaemons/com.argus.ids-agent.sensor.plist";
+export const MACOS_SENSOR_APP_PATH = "/Applications/Argus Sensor.app";
+export const MACOS_SENSOR_EXECUTABLE_PATH =
+	`${MACOS_SENSOR_APP_PATH}/Contents/MacOS/argus-sensor`;
 
 export interface ServiceCommand {
 	args: string[];
@@ -56,6 +61,26 @@ function systemdPath(value: string): string {
 		.replaceAll("\t", "\\x09");
 }
 
+function macosEnable(label: string, path: string): ServiceCommand[] {
+	return [
+		{
+			args: ["bootout", `system/${label}`],
+			command: "/bin/launchctl",
+			ignoreFailure: true,
+		},
+		{
+			args: ["3"],
+			command: "/bin/sleep",
+			ignoreFailure: false,
+		},
+		{
+			args: ["bootstrap", "system", path],
+			command: "/bin/launchctl",
+			ignoreFailure: false,
+		},
+	];
+}
+
 export function serviceResourcePaths(
 	platformName: HostIdentity["platform"],
 ): string[] {
@@ -66,7 +91,12 @@ export function serviceResourcePaths(
 			LINUX_BROKER_SERVICE_PATH,
 			LINUX_BROKER_SERVICE_LINK,
 		]
-		: [MACOS_SERVICE_PATH, MACOS_BROKER_SERVICE_PATH];
+		: [
+			MACOS_SERVICE_PATH,
+			MACOS_BROKER_SERVICE_PATH,
+			MACOS_SENSOR_SERVICE_PATH,
+			MACOS_SENSOR_APP_PATH,
+		];
 }
 
 function linuxServicePlan(
@@ -160,7 +190,7 @@ RestartSec=5
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
-ReadWritePaths=${systemdPath(root)}
+ReadWritePaths=${systemdPath(root)} -/etc/cron.d -/etc/profile.d -/etc/systemd/system -/root -/home -/usr/lib -/usr/local/bin
 CapabilityBoundingSet=CAP_NET_ADMIN CAP_KILL CAP_DAC_OVERRIDE CAP_SYS_PTRACE
 AmbientCapabilities=CAP_NET_ADMIN CAP_KILL CAP_DAC_OVERRIDE CAP_SYS_PTRACE
 
@@ -237,20 +267,56 @@ export function buildMacosBrokerServicePlan(
 			command: "/bin/launchctl",
 			ignoreFailure: true,
 		}],
-		enable: [
-			{
-				args: ["bootout", "system/com.argus.ids-agent.broker"],
-				command: "/bin/launchctl",
-				ignoreFailure: true,
-			},
-			{
-				args: ["bootstrap", "system", MACOS_BROKER_SERVICE_PATH],
-				command: "/bin/launchctl",
-				ignoreFailure: false,
-			},
-		],
+		enable: macosEnable("com.argus.ids-agent.broker", MACOS_BROKER_SERVICE_PATH),
 		label: "com.argus.ids-agent.broker",
 		path: MACOS_BROKER_SERVICE_PATH,
+	};
+}
+
+export function buildMacosSensorServicePlan(
+	root: string,
+	projectDirectory: string,
+	_nodePath: string,
+): ServicePlan {
+	return {
+		content: `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.argus.ids-agent.sensor</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>${xml(MACOS_SENSOR_EXECUTABLE_PATH)}</string>
+    <string>${xml(`${projectDirectory}/dist/cli.js`)}</string>
+    <string>macos-sensor</string>
+    <string>${xml(`--state-dir=${root}`)}</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>${xml(root)}</string>
+  <key>UserName</key>
+  <string>root</string>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>StandardOutPath</key>
+  <string>${xml(`${root}/runtime/sensor.log`)}</string>
+  <key>StandardErrorPath</key>
+  <string>${xml(`${root}/runtime/sensor-error.log`)}</string>
+</dict>
+</plist>
+`,
+		disable: [{
+			args: ["bootout", "system/com.argus.ids-agent.sensor"],
+			command: "/bin/launchctl",
+			ignoreFailure: true,
+		}],
+		enable: macosEnable("com.argus.ids-agent.sensor", MACOS_SENSOR_SERVICE_PATH),
+		label: "com.argus.ids-agent.sensor",
+		path: MACOS_SENSOR_SERVICE_PATH,
 	};
 }
 
@@ -300,18 +366,7 @@ function macosServicePlan(
 				ignoreFailure: true,
 			},
 		],
-		enable: [
-			{
-				args: ["bootout", "system/com.argus.ids-agent"],
-				command: "/bin/launchctl",
-				ignoreFailure: true,
-			},
-			{
-				args: ["bootstrap", "system", MACOS_SERVICE_PATH],
-				command: "/bin/launchctl",
-				ignoreFailure: false,
-			},
-		],
+		enable: macosEnable("com.argus.ids-agent", MACOS_SERVICE_PATH),
 		label: "com.argus.ids-agent",
 		path: MACOS_SERVICE_PATH,
 	};

@@ -43,7 +43,7 @@ The installer creates the `argus-ids` account and starts two systemd services.
 One service runs Argus. A root broker validates and applies containment. Both
 services start after a reboot.
 
-### Mac Studio
+### macOS
 
 Install from source before the first GitHub release:
 
@@ -52,7 +52,10 @@ git clone https://github.com/theRealestAEP/Argus.git
 cd Argus
 cp .env.example .env
 nano .env
-./scripts/setup.sh
+npm ci
+npm run build
+sudo npm install --global .
+sudo ids-agent-install-macos "$PWD/.env"
 ```
 
 After release `v0.1.0`, install its verified archive:
@@ -67,8 +70,27 @@ sudo npm install --global ./on-device-ids-agent-0.1.0.tgz
 sudo ids-agent-install-macos "$PWD/.env"
 ```
 
-The installer creates two LaunchDaemons. One runs Argus as your macOS account.
-The other runs the containment broker as root.
+The installer creates three LaunchDaemons. The agent runs as your macOS
+account. A root sensor runs Apple's `eslogger`. A root broker applies approved
+containment. All three services start after a reboot.
+
+macOS requires one manual privacy step. Add **Argus Sensor** from Applications
+to Full Disk Access when the installer opens System Settings. Then run:
+
+```sh
+ids-agent access
+ids-agent doctor
+ids-agent status
+```
+
+`doctor` reports when Endpoint Security events reach the parser. `status`
+shows the event count and the time of the last event.
+
+Argus monitors process execution, credential access, remote login, launch
+items, account changes, process tampering, malware events, and kernel security
+changes. It can pause or terminate an exact process, quarantine a persistence
+file, remove privilege bits, and restart a signed-policy launchd service.
+Outbound network blocking on macOS remains pending.
 
 ## Updates
 
@@ -78,7 +100,7 @@ Check GitHub Releases:
 ids-agent update-check
 ```
 
-Install a checksum-verified update and restart both services:
+Install a checksum-verified update and restart all services:
 
 ```sh
 sudo ids-agent update \

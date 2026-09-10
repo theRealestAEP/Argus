@@ -155,6 +155,9 @@ export const containmentPlanSchema = z.object({
 		"block-destination",
 		"block-user-egress",
 		"pause-process",
+		"quarantine-persistence",
+		"start-service",
+		"strip-file-privileges",
 		"terminate-process",
 	]),
 	evidence: z.array(z.string().min(1)).min(1),
@@ -261,34 +264,47 @@ export const sensorConfigSchema = z.object({
 
 export type SensorConfig = z.infer<typeof sensorConfigSchema>;
 
+export const alertKindSchema = z.enum([
+	"agent-event-integrity-failure",
+	"agent-policy-violation",
+	"authentication-burst",
+	"credential-access",
+	"critical-file-change",
+	"kernel-integrity-change",
+	"malware-detected",
+	"new-listener",
+	"outbound-connection-burst",
+	"persistence-change",
+	"process-start-burst",
+	"process-tampering",
+	"remote-login",
+	"scheduled-review",
+	"service-stopped",
+	"service-command-shell",
+	"sensor-integrity-failure",
+]);
+
+export const alertSeveritySchema = z.enum(["low", "medium", "high", "critical"]);
+
 export const alertSchema = z.object({
 	createdAt: z.iso.datetime(),
 	evidence: z.array(z.string().min(1)).min(1),
 	id: z.uuid(),
-	kind: z.enum([
-		"agent-event-integrity-failure",
-		"agent-policy-violation",
-		"authentication-burst",
-		"critical-file-change",
-		"new-listener",
-		"outbound-connection-burst",
-		"process-start-burst",
-		"scheduled-review",
-		"service-command-shell",
-		"sensor-integrity-failure",
-	]),
-	severity: z.enum(["low", "medium", "high", "critical"]),
+	kind: alertKindSchema,
+	severity: alertSeveritySchema,
 	summary: z.string().min(1),
 });
 
 export type Alert = z.infer<typeof alertSchema>;
 
 export const incidentReportSchema = z.object({
+	alertKind: alertKindSchema.optional(),
 	alertId: z.uuid(),
 	createdAt: z.iso.datetime(),
 	id: z.uuid(),
 	model: z.string().min(1),
 	report: z.string().min(1),
+	severity: alertSeveritySchema.optional(),
 });
 
 export type IncidentReport = z.infer<typeof incidentReportSchema>;

@@ -44,7 +44,7 @@ describe("alert queue", () => {
 
 	test("saves a local incident report", () => {
 		const root = mkdtempSync(join(tmpdir(), "argus-report-test-"));
-		const report = saveIncidentReport(root, queuedAlert.id, "model", "report text");
+		const report = saveIncidentReport(root, queuedAlert, "model", "report text");
 		expect(report.alertId).toBe(queuedAlert.id);
 		expect(readdirSync(statePaths(root).reports)).toHaveLength(1);
 	});
@@ -53,7 +53,7 @@ describe("alert queue", () => {
 		const root = mkdtempSync(join(tmpdir(), "argus-retention-test-"));
 		saveIncidentReport(
 			root,
-			queuedAlert.id,
+			queuedAlert,
 			"model",
 			"old report",
 			new Date("2026-01-01T00:00:00.000Z"),
@@ -63,7 +63,7 @@ describe("alert queue", () => {
 		writeFileSync(join(statePaths(root).mailReceipts, `${oldName}.json`), "{}");
 		saveIncidentReport(
 			root,
-			queuedAlert.id,
+			queuedAlert,
 			"model",
 			"current report",
 			new Date("2026-02-01T00:00:00.000Z"),
